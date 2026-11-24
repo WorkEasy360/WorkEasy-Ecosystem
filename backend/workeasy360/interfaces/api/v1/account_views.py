@@ -31,7 +31,10 @@ from workeasy360.interfaces.api.v1.auth_views import connection_facts, establish
 from workeasy360.interfaces.api.v1.control_plane_http import limited
 from workeasy360.platform.identity import account
 from workeasy360.platform.identity.middleware import SESSION_EPOCH_KEY
-from workeasy360.platform.identity.sessions import session_public_id
+from workeasy360.platform.identity.sessions import (
+    SESSION_SIGN_IN_ID_KEY,
+    session_public_id,
+)
 from workeasy360.platform.tenancy.resolution import SESSION_PASSWORD_NONCOMPLIANT_KEY
 
 
@@ -146,8 +149,16 @@ def session_revoke_view(request: HttpRequest, session_id: str) -> JsonResponse:
         # endpoint; refusing here keeps this one unambiguous.
         raise SessionNotFound("Use sign out to end this session.")
     where = connection_facts(request)
-    account.revoke_session(user.id, target, **where)
-    return JsonResponse({"ok": True})
+    # ADR-072: revoking ends the whole sign-in the session belongs to (every
+    # host's session of it), so a session of the caller's own sign-in - the
+    # same sign-in on another portal - is refused like the caller's own.
+    ended = account.revoke_session(
+        user.id,
+        target,
+        keep_sign_in_id=request.session.get(SESSION_SIGN_IN_ID_KEY),
+        **where,
+    )
+    return JsonResponse({"ok": True, "ended": ended})
 
 
 @require_http_methods(["POST"])
@@ -186,6 +197,7 @@ def sign_out_everywhere_view(request: HttpRequest) -> JsonResponse:
     import time
 
     from django.contrib.auth import logout as django_logout
+    from django.utils import timezone
 
     from workeasy360.platform.ecosystem import backchannel
 
@@ -195,15 +207,17 @@ def sign_out_everywhere_view(request: HttpRequest) -> JsonResponse:
         return blocked
     user_id = user.id
     started = time.monotonic()
+    # Only what this sign-out asked for: deliveries queued from this moment.
+    asked_from = timezone.now()
     ended = account.sign_out_everywhere(user_id)
     django_logout(request)
 
-    products = backchannel.pending_for_user(user_id)
+    products = backchannel.pending_for_user(user_id, since=asked_from)
     while any(p["status"] == "pending" for p in products):
         if time.monotonic() - started > SIGN_OUT_EVERYWHERE_WAIT_S:
             break
         time.sleep(0.25)
-        products = backchannel.pending_for_user(user_id)
+        products = backchannel.pending_for_user(user_id, since=asked_from)
     return JsonResponse(
         {
             "ok": True,

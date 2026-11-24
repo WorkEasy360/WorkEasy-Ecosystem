@@ -1308,3 +1308,16 @@
     justify-self: start;
   }
 }
+
+/* An integration kit file: keeps its own lines and scrolls inside its box, so a long
+   requirement or URL never widens the page (390 px, 2026-11-18). */
+.kitFile {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--w360-text-secondary);
+  padding: 8px;
+  border-radius: 6px;
+}

@@ -35,12 +35,18 @@ def app_directory_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     each one (Task 6). Data-driven: the set of products comes from the
     catalog, not from anything hardcoded here (Task 21/22)."""
     ctx = request.tenant_context  # type: ignore[attr-defined]
+    return JsonResponse({"apps": directory_entries(ctx)})
+
+
+def directory_entries(ctx: Any) -> list[dict[str, Any]]:
+    """The app directory's entries for this member, in its wire shape - the
+    one assembly My Products on User Admin and, per organization, the Accounts
+    Control Center (ADR-072) both show. The caller has entered ``ctx``'s
+    tenant scope."""
     decisions = selectors.app_directory(ctx)
     decisions = _apply_portal_presentation(ctx, decisions)
     extras = _card_extras(ctx, [d.product_code for d in decisions])
-    return JsonResponse(
-        {"apps": [_public_dict(d, extras.get(d.product_code)) for d in decisions]}
-    )
+    return [_public_dict(d, extras.get(d.product_code)) for d in decisions]
 
 
 def _apply_portal_presentation(ctx: Any, decisions: list[Any]) -> list[Any]:
@@ -214,7 +220,7 @@ def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]
     # ADR-044: how this person enters each product - two fixed queries for the
     # whole directory (the registry, and this person's own preferences).
     signing_in = sign_in.product_sign_in(ctx.user_id, product_codes)
-    held = my_products.holdings(at=now)
+    held, lapsed = my_products.directory_state(at=now)
     usage = seat_services.usage_by_pool(ctx.organization_id) if may_see_seats else {}
 
     extras: dict[str, dict[str, Any]] = {}
@@ -242,7 +248,20 @@ def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]
             "renews_at": None,
             "cancel_at": None,
             "sign_in": _sign_in_json(signing_in.get(code)),
+            # ADR-073 (G13): a paid product whose access ended recently - shown
+            # as Expired with a way to buy it again, not as one never held.
+            "lapsed": None,
         }
+        ended = lapsed.get(code)
+        if ended is not None:
+            card["lapsed"] = {
+                "ended_at": ended.ended_at.isoformat(),
+                "plan": (
+                    {"code": ended.plan_code, "name": ended.plan_name}
+                    if may_see_billing
+                    else None
+                ),
+            }
         if holding is not None:
             if holding.trial_ends_at is not None:
                 card["trial"] = {

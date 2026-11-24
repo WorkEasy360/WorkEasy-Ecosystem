@@ -485,7 +485,7 @@ export const SETUP_STATUS_WORDS: Record<SetupRecord["status"], string> = {
 };
 
 /** Setup still in progress: a product waits for details, a correction or a review. */
-export const setupOpen = (r: SetupRecord) => r.status !== "approved";
+export const setupOpen = (r: Pick<SetupRecord, "status">) => r.status !== "approved";
 
 /** What each product still needs from this organization (`GET /orgs/<slug>/setup`). */
 export function useSetupRecords(slug: string): [Load<SetupRecord[]>, () => void] {

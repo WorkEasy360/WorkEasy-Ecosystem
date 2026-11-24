@@ -177,6 +177,24 @@ def authorize(request: HttpRequest) -> HttpResponse:
         organization_id = authorization.organization_for(
             user_id=user.pk, named=parsed.organization_id
         )
+        if (
+            organization_id is None
+            and parsed.wants_account_confirmation
+            and not parsed.prompt_none
+        ):
+            # The product asked which account ("Use another account") and
+            # nothing names an organization - this person has several, or
+            # none. Which account comes first: the organization is then asked
+            # of whoever answers, at resume and bound to them, and every
+            # refusal is delivered there. Asking the organization first lost
+            # the account question (resume applied only the preference).
+            # Readiness only: the preference is read after every access check.
+            if not sign_in.doors_at_authorize(parsed.integration).sso_available:
+                raise protocol.OAuthError(
+                    protocol.UNAUTHORIZED_CLIENT,
+                    "This product is not ready for Workeasy360 sign-in.",
+                )
+            return _park_for_choice(parsed, user.pk)
         subject = authorization.resolve_subject(
             user_id=user.pk,
             organization_id=organization_id,
@@ -332,7 +350,18 @@ def resume(request: HttpRequest) -> HttpResponse:
             # token rather than fail to the product - the user is signed in
             # and the only missing piece is which organization, which the
             # platform's own chooser is what asks (Task 5).
-            requeued = authorization.create_pending(pending_request)
+            #
+            # A person who has already said which account - at the access
+            # chooser, or by signing in for this very request - is asked the
+            # organization only: the new token is bound to them, so nobody
+            # else can resume it and their resume asks nothing more. Unbound,
+            # "Ask me each time" sent them round both choosers for ever.
+            answered = parked.user_id is not None or not parked.signed_in_before_parking(
+                _session_authenticated_at(request)
+            )
+            requeued = authorization.create_pending(
+                pending_request, user_id=user.pk if answered else None
+            )
             return HttpResponseRedirect(
                 f"{portal_links.auth_url()}/organizations/select?resume={requeued.token}"
             )
@@ -364,7 +393,9 @@ def resume(request: HttpRequest) -> HttpResponse:
                     protocol.UNAUTHORIZED_CLIENT,
                     "This product is not ready for Workeasy360 sign-in.",
                 )
-            if decision.asks(
+            # A product that asked to confirm the account is asked here too,
+            # as at ``authorize`` - not only the person's preference.
+            if pending_request.wants_account_confirmation or decision.asks(
                 entered_this_sign_in=sign_in.entered_this_sign_in(
                     request, pending_request.integration.product_code
                 )
@@ -797,6 +828,7 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         user_id=redeemed.user_id,
         sign_in_id=redeemed.sign_in_id,
     )
+    _record_connection(redeemed)
     return {
         "access_token": access_token.value,
         "token_type": "Bearer",
@@ -804,6 +836,49 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         "id_token": id_token.value,
         "scope": " ".join(redeemed.scope),
     }
+
+
+def _record_connection(redeemed: Any) -> None:
+    """ADR-072: the person's Connected Logins record and Login History entry
+    for this product sign-in, in every mode of the platform. History, not an
+    access decision: a failure to record is logged and never costs the
+    product its tokens."""
+    from workeasy360.platform.ecosystem import connections
+    from workeasy360.platform.identity import account
+
+    try:
+        connections.record_sign_in(
+            integration=redeemed.integration,
+            user_id=redeemed.user_id,
+            organization_id=redeemed.organization_id,
+        )
+        account.record_product_sign_in(
+            redeemed.user_id,
+            product_code=redeemed.integration.product_code,
+            sign_in_id=redeemed.sign_in_id,
+        )
+    except Exception:
+        logger.warning("ecosystem.token.connection_record_failed", exc_info=True)
+        metrics.increment("ecosystem_connection_record_failures_total", at="token")
+
+
+def _record_activity(client: Any, subject: str | None, organization_id: Any) -> None:
+    """ADR-072: a product asked about this person and was told yes - their
+    "last seen" in it. Only an existing connection is touched; never fails
+    the answer."""
+    if not subject:
+        return
+    from workeasy360.platform.ecosystem import connections
+
+    try:
+        connections.record_activity(
+            integration=client.integration,
+            subject=subject,
+            organization_id=organization_id,
+        )
+    except Exception:
+        logger.warning("ecosystem.verify.activity_record_failed", exc_info=True)
+        metrics.increment("ecosystem_connection_record_failures_total", at="verify")
 
 
 def _profile_claims(user_id: Any, scope: tuple[str, ...]) -> dict[str, Any]:
@@ -974,6 +1049,11 @@ def verify_entitlement(request: HttpRequest) -> JsonResponse:
             )
         )
 
+    if result.decision == "allow":
+        # Only an allowed person: every denied one must cost the same reads
+        # (test_every_denied_person_costs_the_same_reads), so the answer stays
+        # the only thing a product learns.
+        _record_activity(client, subject, organization_id)
     response = JsonResponse(result.as_dict())
     response["Cache-Control"] = "no-store"
     return response

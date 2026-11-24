@@ -77,7 +77,8 @@ def user_detail_view(
 ) -> JsonResponse:
     from workeasy360.commercial.controlplane import users
 
-    return JsonResponse(users.detail(ctx, user_id))
+    # ADR-072: looking at a person is audited (once per window).
+    return JsonResponse(users.detail(ctx, user_id, record_view=True))
 
 
 @staff_view(["POST"])

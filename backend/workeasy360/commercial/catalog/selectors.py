@@ -524,6 +524,7 @@ def publish_readiness(
         status=product.status_enum,
         has_app_link=any(str(url).strip() for url in links.values()),
         return_destinations=ecosystem_selectors.has_return_destinations(product.code),
+        sign_in_verified=ecosystem_selectors.sign_in_proven(product.code),
         has_active_plan=Plan.objects.filter(
             product_id=product.id,
             addon_for__isnull=True,

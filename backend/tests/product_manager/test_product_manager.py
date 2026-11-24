@@ -46,11 +46,26 @@ def _action(client, product_id, action):
 
 
 def _ready(client, product_id):
-    """Give a wizard-made product the two things it lacks to publish: a logo and
-    an active plan (a plan is required since 2026-11-10)."""
+    """Give a wizard-made product the three things it lacks to publish: a logo,
+    an active plan (required since 2026-11-10) and - because it signs people in
+    with WorkEasy360 - one completed sign-in (required since 2026-11-18)."""
     response = upload(client, product_id, png(256, 256))
     assert response.status_code == 201, response.content
     _active_plan(product_id)
+    _signed_in_once(product_id)
+
+
+def _signed_in_once(product_id):
+    """What the token endpoint records when the product redeems its first code."""
+    from django.utils import timezone
+
+    from workeasy360.commercial.catalog.models import Product
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    code = Product.objects.get(id=product_id).code
+    ProductIntegration.objects.filter(product_code=code).update(
+        last_token_at=timezone.now()
+    )
 
 
 def _active_plan(product_id):
@@ -554,7 +569,11 @@ def test_publishing_is_refused_until_the_checklist_is_met(manager):
     product = _create(manager)
     refused = _action(manager, product["id"], "publish")
     assert refused.status_code == 400
-    assert refused.json()["missing"] == ["Logo", "At least one active plan"]
+    assert refused.json()["missing"] == [
+        "Logo",
+        "WorkEasy360 sign-in verified",
+        "At least one active plan",
+    ]
     detail = _detail(manager, product["id"])
     assert detail["listing"] == "hidden" and detail["status"] == "draft"
 

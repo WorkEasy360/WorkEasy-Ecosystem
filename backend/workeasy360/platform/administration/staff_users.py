@@ -242,6 +242,47 @@ def detail(ctx: TenantContext, user_id: UUID) -> dict[str, Any]:
     }
 
 
+#: ADR-072: viewing a person is audited once per staff member, per person, per
+#: this window - so a support call that reloads the page is one entry, not a
+#: hundred, and a second look the next morning is a second entry.
+VIEW_AUDIT_WINDOW_S = 15 * 60
+VIEW_AUDIT_ACTION = "staff.user_viewed"
+
+
+@in_scope
+def record_view(ctx: TenantContext, user_id: UUID, *, sections: list[str]) -> bool:
+    """Record, in the control-plane audit log, that this staff member viewed
+    this person's account (ADR-072: their organizations, products, product
+    sign-ins, sign-in history and sessions). At most one entry per
+    ``VIEW_AUDIT_WINDOW_S``. Returns whether an entry was written. Needs
+    ``platform.staff_user.view``, like the view itself; an audit failure fails
+    the view rather than letting it go unrecorded."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from workeasy360.platform.audit.selectors import recorded_since
+
+    authz.require(ctx, VIEW)
+    user = _user(user_id)
+    since = timezone.now() - timedelta(seconds=VIEW_AUDIT_WINDOW_S)
+    if recorded_since(
+        action=VIEW_AUDIT_ACTION,
+        actor_user_id=ctx.user_id,
+        resource_id=user.id,
+        since=since,
+    ):
+        return False
+    audit.record(
+        ctx,
+        VIEW_AUDIT_ACTION,
+        resource_type="identity.user",
+        resource_id=user.id,
+        changes={"sections": sorted(sections)},
+    )
+    return True
+
+
 def _user(user_id: UUID) -> Any:
     from workeasy360.platform.identity.models import User
 

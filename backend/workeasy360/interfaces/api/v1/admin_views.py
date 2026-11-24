@@ -393,6 +393,29 @@ def item_change_quantity_view(
 
 
 @staff_view(["POST"])
+def item_end_view(request, ctx, organization_id: UUID, item_id: UUID) -> JsonResponse:
+    """ADR-073 (G7): end one product - at the period end, or ``immediate`` now -
+    keeping the customer's subscription and other products."""
+    body = _body(request)
+    item = cp_subscriptions.end_product(
+        ctx,
+        organization_id,
+        item_id,
+        reason=body.get("reason"),
+        idempotency_key=_idempotency(request, body),
+        immediate=_flag(body, "immediate"),
+        expected_version=_int(body, "expected_version"),
+    )
+    return JsonResponse(
+        {
+            "item_id": str(item.id),
+            "product_code": item.product_code,
+            "ends_at": item.removed_at.isoformat() if item.removed_at else None,
+        }
+    )
+
+
+@staff_view(["POST"])
 def entitlement_override_view(request, ctx, organization_id: UUID) -> JsonResponse:
     body = _body(request)
     grant = cp_subscriptions.grant_entitlement_override(

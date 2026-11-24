@@ -11,17 +11,30 @@
       "description": "Easy CRM is a sales and customer relationship product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your CRM data stays in Easy CRM.",
       "licensing_mode": "per_seat",
       "sort_order": 10,
-      "trial": {"enabled": true, "duration_days": 7},
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
       "features": [
-        {"key": "easy_crm.sales.pipeline", "name": "Sales pipeline"},
-        {"key": "easy_crm.customers.records", "name": "Customer records"}
+        {
+          "key": "easy_crm.sales.pipeline",
+          "name": "Sales pipeline"
+        },
+        {
+          "key": "easy_crm.customers.records",
+          "name": "Customer records"
+        }
       ],
       "integration": {
         "display_name": "Easy CRM",
         "launch_url": "https://crm.workeasy360.com/",
-        "redirect_uris": ["https://crm.workeasy360.com/api/auth/callback/workeasy360"],
+        "redirect_uris": [
+          "https://crm.workeasy360.com/api/auth/callback/workeasy360"
+        ],
         "sign_in_mode": "sso_only",
-        "post_logout_redirect_uris": ["https://crm.workeasy360.com/login"]
+        "post_logout_redirect_uris": [
+          "https://crm.workeasy360.com/login"
+        ]
       }
     },
     {
@@ -34,16 +47,26 @@
       "description": "EasyBook is an accounting product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your accounting data stays in EasyBook.",
       "licensing_mode": "per_seat",
       "sort_order": 20,
-      "trial": {"enabled": true, "duration_days": 7},
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
       "features": [
-        {"key": "easybook.accounting.records", "name": "Accounting records"}
+        {
+          "key": "easybook.accounting.records",
+          "name": "Accounting records"
+        }
       ],
       "integration": {
         "display_name": "EasyBook",
         "launch_url": "https://book.workeasy360.com/",
-        "redirect_uris": ["https://book.workeasy360.com/api/auth/callback/workeasy360"],
+        "redirect_uris": [
+          "https://book.workeasy360.com/api/auth/callback/workeasy360"
+        ],
         "sign_in_mode": "sso_only",
-        "post_logout_redirect_uris": ["https://book.workeasy360.com/login"]
+        "post_logout_redirect_uris": [
+          "https://book.workeasy360.com/login"
+        ]
       }
     },
     {
@@ -56,19 +79,38 @@
       "description": "Easy Project is a project and operations product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your projects and tasks stay in Easy Project.",
       "licensing_mode": "per_seat",
       "sort_order": 30,
-      "trial": {"enabled": true, "duration_days": 7},
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
       "features": [
-        {"key": "easy_project.work.projects_tasks", "name": "Projects, tasks and subtasks"},
-        {"key": "easy_project.work.risks_issues", "name": "Risks and issues"},
-        {"key": "easy_project.work.dependencies", "name": "Task dependencies"},
-        {"key": "easy_project.automation.rules", "name": "Rule-based automation"}
+        {
+          "key": "easy_project.work.projects_tasks",
+          "name": "Projects, tasks and subtasks"
+        },
+        {
+          "key": "easy_project.work.risks_issues",
+          "name": "Risks and issues"
+        },
+        {
+          "key": "easy_project.work.dependencies",
+          "name": "Task dependencies"
+        },
+        {
+          "key": "easy_project.automation.rules",
+          "name": "Rule-based automation"
+        }
       ],
       "integration": {
         "display_name": "Easy Project",
         "launch_url": "https://ops.workeasy360.com/",
-        "redirect_uris": ["https://ops.workeasy360.com/api/auth/callback/workeasy360"],
+        "redirect_uris": [
+          "https://ops.workeasy360.com/api/auth/callback/workeasy360"
+        ],
         "sign_in_mode": "sso_only",
-        "post_logout_redirect_uris": ["https://ops.workeasy360.com/"]
+        "post_logout_redirect_uris": [
+          "https://ops.workeasy360.com/"
+        ]
       }
     },
     {
@@ -81,16 +123,290 @@
       "description": "Easy Help Desk is a customer support product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your support tickets stay in Easy Help Desk.",
       "licensing_mode": "per_seat",
       "sort_order": 40,
-      "trial": {"enabled": true, "duration_days": 7},
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
       "features": [
-        {"key": "easy_helpdesk.support.tickets", "name": "Support tickets"}
+        {
+          "key": "easy_helpdesk.support.tickets",
+          "name": "Support tickets"
+        }
       ],
       "integration": {
         "display_name": "Easy Help Desk",
         "launch_url": "https://help.workeasy360.com/",
-        "redirect_uris": ["https://help.workeasy360.com/api/auth/callback/workeasy360"],
+        "redirect_uris": [
+          "https://help.workeasy360.com/api/auth/callback/workeasy360"
+        ],
         "sign_in_mode": "sso_only",
-        "post_logout_redirect_uris": ["https://help.workeasy360.com/login"]
+        "post_logout_redirect_uris": [
+          "https://help.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_forms",
+      "slug": "workeasy-forms",
+      "name": "Workeasy Forms",
+      "category": "Productivity",
+      "icon": "generic",
+      "tagline": "Forms and surveys with AI assistance.",
+      "description": "Workeasy Forms builds forms and surveys. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 50,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_forms.core",
+          "name": "Workeasy Forms"
+        }
+      ],
+      "integration": {
+        "display_name": "Workeasy Forms",
+        "launch_url": "https://forms.workeasy360.com/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://forms.workeasy360.com/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://forms.workeasy360.com/",
+        "post_logout_redirect_uris": [
+          "https://forms.workeasy360.com/"
+        ]
+      }
+    },
+    {
+      "code": "ai_commerce",
+      "slug": "ai-commerce",
+      "name": "AI Commerce",
+      "category": "Sales / Commerce",
+      "icon": "cart",
+      "tagline": "An online store builder with AI assistance.",
+      "description": "AI Commerce builds and runs online stores. Its merchant admin signs in with WorkEasy360; shoppers are not WorkEasy360 accounts.",
+      "licensing_mode": "per_seat",
+      "sort_order": 60,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "ai_commerce.core",
+          "name": "AI Commerce"
+        }
+      ],
+      "integration": {
+        "display_name": "AI Commerce",
+        "launch_url": "https://commerce.workeasy360.com/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://commerce.workeasy360.com/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://commerce.workeasy360.com/",
+        "post_logout_redirect_uris": [
+          "https://commerce.workeasy360.com/"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_lms",
+      "slug": "workeasy-lms",
+      "name": "WorkEasyLMS",
+      "category": "Learning",
+      "icon": "board",
+      "tagline": "Courses and training for your team.",
+      "description": "WorkEasyLMS runs courses and training. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 70,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_lms.core",
+          "name": "WorkEasyLMS"
+        }
+      ],
+      "integration": {
+        "display_name": "WorkEasyLMS",
+        "launch_url": "https://learn.workeasy360.com/",
+        "redirect_uris": [
+          "https://learn.workeasy360.com/api/auth/callback/workeasy360"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://learn.workeasy360.com/",
+        "post_logout_redirect_uris": [
+          "https://learn.workeasy360.com/"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_hrms",
+      "slug": "workeasy-hrms",
+      "name": "WorkEasy360 HRMS",
+      "category": "HR",
+      "icon": "users",
+      "tagline": "People, attendance and HR records.",
+      "description": "WorkEasy360 HRMS keeps people, attendance and HR records. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 80,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_hrms.core",
+          "name": "WorkEasy360 HRMS"
+        }
+      ],
+      "integration": {
+        "display_name": "WorkEasy360 HRMS",
+        "launch_url": "https://hrms.workeasy360.com/api/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://hrms.workeasy360.com/api/auth/callback/workeasy360"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://hrms.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://hrms.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_campaign",
+      "slug": "workeasy-campaign",
+      "name": "Workeasy Campaign",
+      "category": "Marketing",
+      "icon": "megaphone",
+      "tagline": "Email campaigns, audiences and consent.",
+      "description": "Workeasy Campaign sends email campaigns to the audiences you build. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 90,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_campaign.core",
+          "name": "Workeasy Campaign"
+        }
+      ],
+      "integration": {
+        "display_name": "Workeasy Campaign",
+        "launch_url": "https://campaign.workeasy360.com/api/v1/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://campaign.workeasy360.com/api/v1/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://campaign.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://campaign.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_agents",
+      "slug": "workeasy-agents",
+      "name": "WorkEasy360 Agents",
+      "category": "AI",
+      "icon": "cog",
+      "tagline": "AI agents that work from your documents.",
+      "description": "WorkEasy360 Agents builds AI agents that answer from your own documents. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 100,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_agents.core",
+          "name": "WorkEasy360 Agents"
+        }
+      ],
+      "integration": {
+        "display_name": "WorkEasy360 Agents",
+        "launch_url": "https://agents.workeasy360.com/api/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://agents.workeasy360.com/api/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://agents.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://agents.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_sendstack",
+      "slug": "sendstack",
+      "name": "SendStack",
+      "category": "Messaging",
+      "icon": "generic",
+      "tagline": "WhatsApp messaging for your business.",
+      "description": "SendStack sends and manages WhatsApp messages for your business. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 110,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_sendstack.core",
+          "name": "SendStack"
+        }
+      ],
+      "integration": {
+        "display_name": "SendStack",
+        "launch_url": "https://sendstack.workeasy360.com/api/v1/auth/workeasy360/start/",
+        "redirect_uris": [
+          "https://sendstack.workeasy360.com/api/v1/auth/workeasy360/callback/"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://sendstack.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://sendstack.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_booking",
+      "slug": "workeasy-booking",
+      "name": "WorkEasy360 Booking",
+      "category": "Scheduling",
+      "icon": "calendar",
+      "tagline": "Appointments and bookings for your business.",
+      "description": "WorkEasy360 Booking takes appointments and bookings for your business. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 120,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_booking.core",
+          "name": "WorkEasy360 Booking"
+        }
+      ],
+      "integration": {
+        "display_name": "WorkEasy360 Booking",
+        "launch_url": "https://booking.workeasy360.com/api/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://booking.workeasy360.com/api/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://booking.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://booking.workeasy360.com/login"
+        ]
       }
     }
   ]

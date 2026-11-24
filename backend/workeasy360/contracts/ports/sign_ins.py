@@ -105,3 +105,98 @@ def notify_sign_ins_ended(
 def reset_sign_ins_ended_listeners() -> None:
     """Test hook only."""
     _listeners.clear()
+
+
+# --- ADR-073 (G10): access ended while the sign-in lives on ---------------------
+#
+# A person can lose a product without their Workeasy360 sign-in ending: they are
+# removed from (or suspended in) the organization, an administrator takes their
+# seat back, or the organization's entitlement ends (expiry, cancellation, a
+# reconciliation). Before ADR-073 the product learned this only at its next
+# entitlement re-check (up to 15 minutes). The same outbox now owes it a
+# back-channel logout at once. A separate listener and reason set, so the
+# sign-in endings above are untouched.
+
+REASON_MEMBERSHIP_REMOVED = "membership_removed"
+REASON_MEMBERSHIP_SUSPENDED = "membership_suspended"
+REASON_SEAT_RELEASED = "seat_released"
+REASON_ENTITLEMENT_ENDED = "entitlement_ended"
+
+ACCESS_ENDED_REASONS = frozenset(
+    {
+        REASON_MEMBERSHIP_REMOVED,
+        REASON_MEMBERSHIP_SUSPENDED,
+        REASON_SEAT_RELEASED,
+        REASON_ENTITLEMENT_ENDED,
+    }
+)
+
+
+@runtime_checkable
+class AccessEndedListener(Protocol):
+    def access_ended(
+        self,
+        *,
+        user_ids: tuple[UUID, ...],
+        product_codes: tuple[str, ...],
+        reason: str,
+    ) -> int:
+        """Record what these people's loss of these products owes the products.
+
+        A logout token names a person (``sub``), never an organization, so a
+        product told this ends the person's sessions in that product for every
+        organization - safe, because the next sign-in is passwordless while the
+        Workeasy360 sign-in lives and is checked again for the organization it
+        names. Must not make a network call: it runs inside the caller's
+        transaction. Returns how many deliveries were queued.
+        """
+        ...
+
+
+_access_listeners: list[AccessEndedListener] = []
+
+
+def register_access_ended_listener(listener: AccessEndedListener) -> None:
+    """Called once per listener, from its owning app's ``ready()``."""
+    if not any(existing is listener for existing in _access_listeners):
+        _access_listeners.append(listener)
+
+
+def notify_access_ended(
+    *,
+    user_ids: Iterable[object],
+    product_codes: Iterable[object],
+    reason: str,
+) -> int:
+    """Tell every registered listener that these people lost these products.
+    A no-op when there is nobody, nothing, or no listener. Returns how many
+    deliveries the listeners queued."""
+    if reason not in ACCESS_ENDED_REASONS:
+        raise ValueError(f"Unknown access end reason {reason!r}.")
+    people: list[UUID] = []
+    for raw in user_ids:
+        if raw is None:
+            continue
+        try:
+            people.append(UUID(str(raw)))
+        except (TypeError, ValueError):
+            continue
+    codes = [str(code) for code in product_codes if code]
+    if not people or not codes:
+        return 0
+    queued = 0
+    for listener in list(_access_listeners):
+        queued += int(
+            listener.access_ended(
+                user_ids=tuple(dict.fromkeys(people)),
+                product_codes=tuple(dict.fromkeys(codes)),
+                reason=reason,
+            )
+            or 0
+        )
+    return queued
+
+
+def reset_access_ended_listeners() -> None:
+    """Test hook only."""
+    _access_listeners.clear()

@@ -10,9 +10,10 @@ all (ADR-044 consequences). A product that registers a
 This module **makes no network call** - the ecosystem package is forbidden
 outbound HTTP. It does three things:
 
-1. :func:`record_product_sign_in` - at the token endpoint, remember that this
+1. :func:`record_product_sign_in` - at the token endpoint, record which issuer
+   and when each product last redeemed a code, and remember that this
    sign-in opened this product (only for integrations that take back-channel
-   logout; nobody else's token or table changes);
+   logout; no other product's row changes);
 2. :class:`SignInsEndedRecorder` - the ``contracts.ports.sign_ins`` listener:
    inside identity's own transaction, turn ended sign-ins into
    :class:`BackchannelLogout` rows (the transactional outbox);
@@ -59,6 +60,8 @@ CLAIM_LEASE_S = 120
 NOTIFIED_STATUSES = (IntegrationStatus.ACTIVE.value, IntegrationStatus.SUSPENDED.value)
 
 DELIVERIES_TOTAL = "ecosystem_backchannel_logouts_total"
+#: ``ProductIntegration.last_token_at`` is kept to this resolution.
+LAST_TOKEN_RESOLUTION = timedelta(hours=1)
 
 
 def takes_backchannel_logout(integration: Any) -> bool:
@@ -80,20 +83,27 @@ def record_product_sign_in(
 ) -> None:
     """Remember that this sign-in opened this product. Idempotent per sign-in.
 
-    Also remembers the issuer the product redeemed this code under (ADR-067):
-    it is the one the product is configured with, so it is the one its logout
-    tokens must name. A conditional update - no write, and no row lock, unless
-    the product moved to the other sign-in name.
+    For every product, back-channel logout or not, it remembers the issuer the
+    product redeemed this code under (ADR-067) and, to the hour, when: the
+    issuer is the one the product is configured with, so it is the one its
+    logout tokens must name, and both are the evidence Super Admin's readiness
+    and ``w360_issuer_readiness`` read. Conditional updates: no write, and no
+    row lock, unless the product moved to the other sign-in name or the last
+    recorded redemption is more than an hour old. Only a product that takes
+    back-channel logout also gets a ``ProductSignIn`` row.
     """
-    if not takes_backchannel_logout(integration):
-        return
     from workeasy360.platform.ecosystem import tokens
 
     redeemed_under = tokens.issuer()
+    now = timezone.now()
     ProductIntegration.objects.filter(pk=integration.pk).exclude(
         last_token_issuer=redeemed_under
-    ).update(last_token_issuer=redeemed_under)
-    now = timezone.now()
+    ).update(last_token_issuer=redeemed_under, last_token_at=now)
+    ProductIntegration.objects.filter(pk=integration.pk).filter(
+        Q(last_token_at__isnull=True) | Q(last_token_at__lt=now - LAST_TOKEN_RESOLUTION)
+    ).update(last_token_at=now)
+    if not takes_backchannel_logout(integration):
+        return
     with transaction.atomic():
         updated = ProductSignIn.objects.filter(
             integration=integration,
@@ -409,13 +419,18 @@ def _delivery_json(row: Any) -> dict[str, Any] | None:
     }
 
 
-def pending_for_user(user_id: UUID) -> list[dict[str, Any]]:
+def pending_for_user(user_id: UUID, *, since: Any = None) -> list[dict[str, Any]]:
     """Product sign-outs still being delivered for this person, newest first.
 
     What "sign out everywhere" shows instead of claiming it finished: products
-    that have not yet confirmed are listed by name, never hidden.
+    that have not yet confirmed are listed by name, never hidden. ``since``
+    limits it to the deliveries queued from that moment - the ones one sign-out
+    asked for (2026-11-18: without it the page also listed a product signed out
+    earlier that day, as if this sign-out had reached it); by default the last
+    24 hours.
     """
-    since = timezone.now() - timedelta(hours=24)
+    if since is None:
+        since = timezone.now() - timedelta(hours=24)
     rows = (
         BackchannelLogout.objects.filter(user_id=user_id, created_at__gte=since)
         .select_related("integration")
@@ -441,3 +456,83 @@ def purge_finished(*, older_than_days: int = 30) -> int:
     deleted, _ = BackchannelLogout.objects.filter(finished_at__lt=cutoff).delete()
     ended, _ = ProductSignIn.objects.filter(ended_at__lt=cutoff).delete()
     return deleted + ended
+
+
+# --- ADR-073 (G10): access ended while the sign-in lives on ---------------------------
+
+
+class AccessEndedRecorder:
+    """The ``AccessEndedListener`` the ecosystem registers at app-ready."""
+
+    def access_ended(
+        self,
+        *,
+        user_ids: tuple[UUID, ...],
+        product_codes: tuple[str, ...],
+        reason: str,
+    ) -> int:
+        return record_access_ended(
+            user_ids=user_ids, product_codes=product_codes, reason=reason
+        )
+
+
+def record_access_ended(
+    *, user_ids: tuple[UUID, ...], product_codes: tuple[str, ...], reason: str
+) -> int:
+    """Queue one logout per (person, product) the person is signed in to and
+    has just lost. Returns how many were queued.
+
+    The same outbox, in the caller's transaction, as :func:`record_sign_ins_ended`
+    with ``everywhere`` - but only for the products named: the token carries
+    ``sub`` alone, so the product ends every session of that person *in that
+    product*, whichever organization it was opened for (a person who still
+    holds the product through another organization signs straight back in:
+    their Workeasy360 sign-in is untouched). Their other products are not told.
+
+    Only a product the person has a live sign-in record for is told - the
+    ``ProductSignIn`` rows a sign-in ending would have used - and those rows are
+    ended, so a later sign-out does not tell the product a second time.
+    """
+    if not user_ids or not product_codes:
+        return 0
+    with transaction.atomic():
+        rows = list(
+            # Only the sign-in rows are locked, never the integration joined to them:
+            # the token endpoint updates that row on every redemption.
+            ProductSignIn.objects.select_for_update(of=("self",))
+            .filter(
+                user_id__in=list(user_ids),
+                ended_at__isnull=True,
+                integration__product_code__in=list(product_codes),
+                integration__status__in=NOTIFIED_STATUSES,
+            )
+            .select_related("integration")
+        )
+        if not rows:
+            return 0
+        now = timezone.now()
+        owed: dict[tuple[Any, UUID], Any] = {}
+        for row in rows:
+            if takes_backchannel_logout(row.integration):
+                owed.setdefault((row.integration_id, row.user_id), row.integration)
+        deliveries = [
+            BackchannelLogout(
+                integration=integration,
+                user_id=user_id,
+                sign_in_id=None,
+                reason=reason,
+                next_attempt_at=now,
+            )
+            for (_integration_id, user_id), integration in owed.items()
+        ]
+        ProductSignIn.objects.filter(pk__in=[r.pk for r in rows]).update(ended_at=now)
+        BackchannelLogout.objects.bulk_create(deliveries)
+    metrics.increment(DELIVERIES_TOTAL, float(len(deliveries)), outcome="queued")
+    logger.info(
+        "ecosystem.backchannel.access_ended",
+        people=len({user_id for _i, user_id in owed}),
+        deliveries=len(deliveries),
+        reason=reason,
+    )
+    transaction.on_commit(_kick_delivery)
+    return len(deliveries)

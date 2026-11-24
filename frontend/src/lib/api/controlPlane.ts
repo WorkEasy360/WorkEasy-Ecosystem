@@ -459,6 +459,29 @@ export interface SsoReadinessCheck {
   detail: string;
 }
 
+export type IntegrationKitFramework = "django" | "spring" | "node" | "other";
+
+/** A product's generated sign-in configuration (Super Admin > Integration kit). No secrets. */
+export interface IntegrationKit {
+  product_code: string;
+  framework: IntegrationKitFramework;
+  adapter: string;
+  generated_at: string;
+  facts: {
+    issuer: string;
+    discovery: string;
+    client_id: string;
+    product_code: string;
+    redirect_uris: string[];
+    backchannel_logout_uri: string;
+    key_id: string;
+    integration_status: string;
+  };
+  missing: string[];
+  files: { path: string; purpose: string; content: string }[];
+  next: string[];
+}
+
 export interface SsoReadiness {
   verdict: "ready" | "attention" | "not_ready";
   checks: SsoReadinessCheck[];
@@ -950,6 +973,9 @@ export const adminApi = {
     }),
   /** Whether people can sign in to the product through WorkEasy360, and what is missing. */
   integrationReadiness: (productCode: string) => apiFetch<SsoReadiness>(`${admin}/products/${productCode}/integration/readiness`),
+  /** The integration kit for one framework (audited; holds no secret). */
+  integrationKit: (productCode: string, framework: IntegrationKitFramework) =>
+    apiFetch<IntegrationKit>(`${admin}/products/${productCode}/integration/kit`, { query: { framework } }),
 
   partners: (q: { status?: string; q?: string; cursor?: string; limit?: number }) =>
     apiFetch<Page<PartnerSummary>>(`${admin}/partners`, { query: q }),

@@ -241,6 +241,12 @@ class ProductIntegration(models.Model):
     last_token_issuer = models.CharField(
         max_length=255, blank=True, default="", db_default=""
     )
+    #: When this product last redeemed an authorization code, to the hour: the
+    #: evidence that a sign-in to it works (Super Admin's readiness and the
+    #: publish checklist) and when a sign-in name was last used (retiring
+    #: ``auth.``). Written at most once an hour per product, so a busy product
+    #: never contends on its own row. Never an access decision.
+    last_token_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -777,6 +783,67 @@ class ProductSignIn(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"sign-in {self.sign_in_id} -> {self.integration_id}"
+
+
+class ProductConnection(models.Model):
+    """ADR-072: one person's WorkEasy360 sign-in connection to one product, in
+    one organization - the durable record behind Connected Logins.
+
+    ``ProductSignIn`` cannot be it: it exists only for products that take
+    back-channel logout, has no organization (on purpose: a logout names a
+    sign-in, not a tenant), is one row per *platform* sign-in, and is purged
+    30 days after that sign-in ends. This row is per (person, product,
+    organization), for every product, and says only what the platform saw:
+
+    - ``first_sign_in_at`` / ``last_sign_in_at``: when the product redeemed an
+      authorization code for this person in this organization (the token
+      endpoint) - "an SSO connection was established", "last signed in";
+    - ``last_activity_at``: when the product last asked
+      ``/integrations/entitlements/verify`` about this person (``subject``)
+      and was told yes,
+      which a product does while their session is in use - "last seen", to
+      ``ACTIVITY_RESOLUTION``. **Never "active"**: no signal says a product
+      session exists right now.
+
+    Not tenant-scoped (``TENANT_SCOPE_EXEMPT``): it is the person's, across
+    their organizations, written by two server-to-server endpoints that have
+    no tenant context, and read only by the person on WorkEasy360 Accounts or
+    by staff holding ``platform.staff_user.view``. ``organization_id`` is a
+    label of the sign-in (the ID token's ``organization_id``), never an access
+    decision. Deleted with the account (cascade) and after
+    ``ACCOUNT_EVENT_RETENTION_DAYS`` without a sign-in or activity.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+"
+    )
+    integration = models.ForeignKey(
+        ProductIntegration, on_delete=models.CASCADE, related_name="connections"
+    )
+    organization_id = models.UUIDField()
+    first_sign_in_at = models.DateTimeField(default=timezone.now)
+    last_sign_in_at = models.DateTimeField(default=timezone.now)
+    sign_in_count = models.PositiveIntegerField(default=1)
+    last_activity_at = models.DateTimeField(null=True, blank=True)
+    #: ``max(last_sign_in_at, last_activity_at)``, kept so retention is one
+    #: indexed range delete.
+    last_seen_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "ecosystem_product_connection"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "integration", "organization_id"],
+                name="uq_product_connection",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["last_seen_at"], name="ix_product_connection_seen"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.user_id} -> {self.integration_id} in {self.organization_id}"
 
 
 class BackchannelLogoutStatus(StrEnum):

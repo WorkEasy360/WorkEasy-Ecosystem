@@ -386,3 +386,167 @@ def test_without_the_store_host_there_is_no_pass(settings, customer):
         HTTP_ORIGIN=ORIGINS["store"],
     )
     assert response.status_code in (403, 404)
+
+
+# --- ADR-073: the Store signs in through WorkEasy360 Accounts --------------------------
+#
+# With ``W360_ACCOUNTS_IDENTITY`` on (ADR-071) the Store's own sign-in becomes
+# Accounts' hand-off - the customer portal's, with ``mode=store`` - so after a
+# Store sign-in the central session exists and the first product opened asks for
+# no password. Off (production today) nothing above changes; the last test here
+# proves it.
+
+
+@pytest.fixture
+def through_accounts(store_on):
+    store_on.W360_ACCOUNTS_IDENTITY = True
+    return store_on
+
+
+def _hand_to_store(accounts, *, next_path=None, redeem_on="store"):
+    """What the browser does: the Store's proxy sets its binding cookie and sends
+    the person to Accounts; Accounts, signed in, issues the hand-off; the Store's
+    ``/auth/continue`` spends it for the Store's own session."""
+    import secrets
+
+    from django.conf import settings
+
+    state = secrets.token_urlsafe(32)
+    issued = accounts.post(
+        "/api/v1/auth/handoff", {"mode": "store", "next": next_path, "state": state}
+    )
+    if issued.status_code != 200:
+        return None, issued, None
+    target = On(redeem_on)
+    target.client.cookies[settings.PORTAL_STATE_COOKIE_NAME] = state
+    target.get("/api/v1/auth/session")
+    code = issued.json()["redirect_url"].split("#code=", 1)[1]
+    return target, issued, target.post("/api/v1/auth/handoff/redeem", {"code": code})
+
+
+def _sign_in_ids(user) -> set:
+    from workeasy360.platform.identity.models import UserSession
+
+    return set(UserSession.objects.filter(user=user).values_list("sign_in_id", flat=True))
+
+
+def test_with_accounts_identity_a_store_sign_in_is_an_accounts_sign_in(
+    through_accounts, customer
+):
+    accounts = On("auth").sign_in(customer["user"])
+    store, issued, redeemed = _hand_to_store(accounts, next_path="/store/checkout?plan=x")
+    assert issued.json()["redirect_url"].startswith(
+        f"{ORIGINS['store']}/auth/continue#code="
+    )
+    assert issued["Cache-Control"] == "no-store"
+    assert redeemed.status_code == 200, redeemed.content
+    assert redeemed.json() == {"next": "/store/checkout?plan=x"}
+
+    # The same person, on a session of the Store's own - and Accounts stays signed in.
+    mine = store.get("/api/v1/auth/session").json()
+    assert mine["authenticated"] is True and mine["email"] == customer["user"].email
+    assert accounts.get("/api/v1/auth/session").json()["authenticated"] is True
+    # One sign-in behind both sessions, so signing out of either ends the other.
+    assert len(_sign_in_ids(customer["user"])) == 1
+    # And the Store's own API calls work on that session (its checkout endpoints).
+    access = store.get(f"/api/v1/orgs/{customer['slug']}/access")
+    assert access.status_code == 200, access.content
+
+
+def test_signing_out_of_the_store_ends_the_accounts_sign_in_too(
+    through_accounts, customer
+):
+    accounts = On("auth").sign_in(customer["user"])
+    store, _issued, redeemed = _hand_to_store(accounts)
+    assert redeemed.status_code == 200
+    store.post("/api/v1/auth/logout")
+    assert accounts.get("/api/v1/auth/session").json()["authenticated"] is False
+
+
+def test_the_first_product_opened_after_a_store_sign_in_needs_no_password(
+    through_accounts, customer, register_product, entitled
+):
+    """The journey's gap (G3): bought in the Store, then opened - the product's
+    authorization request on Accounts finds the sign-in and returns a code."""
+    from urllib.parse import parse_qs, urlencode, urlsplit
+
+    from tests.universal_sso.conftest import AUTHORIZE, authorize_query
+
+    registration = register_product("books")  # organization-wide: no seat to assign
+    entitled(customer["org"].id, "books")
+    from workeasy360.platform.ecosystem.models import UserSignInPreference
+
+    # The person's own choice: open products with their WorkEasy360 account.
+    UserSignInPreference.objects.update_or_create(
+        user=customer["user"], product_code="", defaults={"mode": "auto_sso"}
+    )
+
+    accounts = On("auth").sign_in(customer["user"])
+    _store, _issued, redeemed = _hand_to_store(accounts, next_path="/store")
+    assert redeemed.status_code == 200
+    _verifier, query = authorize_query(registration, str(customer["org"].id))
+    answer = accounts.get(f"{AUTHORIZE}?{urlencode(query)}")
+    assert answer.status_code == 302, answer.content
+    location = urlsplit(answer["Location"])
+    assert (
+        f"{location.scheme}://{location.netloc}{location.path}"
+        == registration["redirect_uri"]
+    )
+    assert parse_qs(location.query)["code"]
+
+
+def test_a_store_hand_off_lands_only_on_a_store_page(through_accounts, customer):
+    accounts = On("auth").sign_in(customer["user"])
+    for asked in (
+        "/o/acme/billing",
+        "https://evil.example/store",
+        "//evil.example",
+        "/admin",
+    ):
+        _store, _issued, redeemed = _hand_to_store(accounts, next_path=asked)
+        assert redeemed.json() == {"next": "/store"}, asked
+
+
+def test_a_store_code_is_spent_only_on_the_store(through_accounts, customer):
+    accounts = On("auth").sign_in(customer["user"])
+    app, _issued, redeemed = _hand_to_store(accounts, redeem_on="app")
+    assert redeemed.status_code == 400
+    assert app.get("/api/v1/auth/session").json()["authenticated"] is False
+
+
+def test_a_store_sign_up_with_accounts_identity_emails_an_accounts_link(through_accounts):
+    from tests.phase9.conftest import deliver_account_mail
+    from workeasy360.platform.identity import portals
+
+    assert portals.identity_url("store") == ORIGINS["auth"]
+    store = On("store")
+    store.get("/api/v1/auth/session")
+    sent = store.post(
+        "/api/v1/public/signup",
+        {
+            "first_name": "Sam",
+            "last_name": "Accounts",
+            "email": "sam.accounts@example.com",
+            "password": "a long enough passphrase 9",  # pragma: allowlist secret
+        },
+    )
+    assert sent.status_code == 202, sent.content
+    messages = [m for m in deliver_account_mail() if "Confirm your email" in m.subject]
+    assert f"{ORIGINS['auth']}/verify-email#token=" in messages[-1].body
+
+
+def test_without_accounts_identity_nothing_hands_a_sign_in_to_the_store(
+    store_on, customer
+):
+    """Production today: the Store signs in itself (ADR-065), exactly as before."""
+    from workeasy360.platform.identity import portals
+
+    accounts = On("auth").sign_in(customer["user"])
+    _store, issued, _redeemed = _hand_to_store(accounts)
+    assert issued.status_code == 400 and issued.json() == {"code": "handoff_invalid"}
+    refused = On("store").post("/api/v1/auth/handoff/redeem", {"code": "x" * 43})
+    assert refused.status_code == 404 and refused.json() == {"code": "not_found"}
+    assert portals.identity_url("store") == ORIGINS["store"]
+    # ...and its own sign-in still answers on its own host.
+    store = On("store").sign_in(customer["user"])
+    assert store.get("/api/v1/auth/session").json()["authenticated"] is True

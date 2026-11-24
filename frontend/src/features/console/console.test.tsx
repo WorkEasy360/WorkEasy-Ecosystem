@@ -2064,6 +2064,33 @@ describe("my apps and product access", () => {
     await expectNoViolations(container);
   });
 
+  it("an expired paid product reads as Expired with a way to renew, never as Explore (ADR-073)", async () => {
+    const lapsed = {
+      ...app("ops", "Easy Project", "no_entitlement"),
+      lapsed: { ended_at: "2026-11-01T00:00:00Z", plan: { code: "ops_team", name: "Easy Project Team" } },
+    };
+    mockApi(
+      productRoutes({
+        [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "EasyBook", "active"), lapsed] } }],
+      }),
+    );
+    const { container } = renderOrg(<MyAppsScreen />, ["commercial.subscription.manage", "commercial.subscription.view"]);
+    const card = (await screen.findByRole("heading", { name: "Easy Project" })).closest("article") as HTMLElement;
+    expect(within(card).getByText("Expired")).toBeInTheDocument();
+    expect(within(card).queryByText("Trial expired")).not.toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Renew or buy again: Easy Project" })).toHaveAttribute("href", "/o/acme/store/ops");
+    expect(within(card).queryByRole("link", { name: "Explore products" })).not.toBeInTheDocument();
+    expect(chipCount("Expired")).toContain("1");
+    await expectNoViolations(container);
+
+    fireEvent.click(within(card).getByRole("button", { name: "View details: Easy Project" }));
+    const details = screen.getByRole("dialog", { name: "Easy Project" });
+    expect(within(details).getByText("Easy Project Team")).toBeInTheDocument();
+    expect(within(details).getByText(/^Ended /)).toBeInTheDocument();
+    expect(within(details).getByRole("link", { name: "Renew / Buy again" })).toHaveAttribute("href", "/o/acme/store/ops");
+    expect(within(details).queryByRole("button", { name: "Open Easy Project" })).not.toBeInTheDocument();
+  });
+
   it("pending setup is handled in My Products: ?filter=setup, the reviewer's words, Submit corrections", async () => {
     nav.search = new URLSearchParams("filter=setup");
     const calls = mockApi(productRoutes({ [`POST ${ORG}/setup/su1/submit`]: [{ status: 200, body: { results: [] } }] }));

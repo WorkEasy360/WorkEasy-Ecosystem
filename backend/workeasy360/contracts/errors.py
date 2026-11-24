@@ -883,6 +883,18 @@ class EmailChangeInvalid(AccountSecurityError):
         super().__init__(message or "That email cannot be used.", field=field, **context)
 
 
+class ProfileInvalid(AccountSecurityError):
+    """A name the person gave for their own account cannot be used: empty,
+    too long, or carrying control characters (ADR-072)."""
+
+    code = "profile_invalid"
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "That name cannot be used.", field=field, **context)
+
+
 class AccountLinkInvalid(AccountSecurityError):
     """No redeemable verification or reset link for this token. One answer for
     unknown, expired and already used, like ``InvitationInvalid``: the token

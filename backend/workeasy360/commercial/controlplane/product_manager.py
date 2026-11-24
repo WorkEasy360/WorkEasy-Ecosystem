@@ -213,6 +213,7 @@ ACTIVITY_LABELS: dict[str, str] = {
     "ecosystem.integration.transitioned": "Integration status changed",
     "ecosystem.integration.credential_created": "Credential added",
     "ecosystem.integration.credential_revoked": "Credential revoked",
+    "ecosystem.integration.kit_generated": "Integration kit generated",
 }
 _URL_KEYS = frozenset(
     {"application_url", "documentation_url", "support_url", "marketing_url", "slug"}

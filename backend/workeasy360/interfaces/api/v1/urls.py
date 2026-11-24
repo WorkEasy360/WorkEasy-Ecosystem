@@ -18,6 +18,7 @@ from django.urls import path
 
 from workeasy360.interfaces.api.v1 import (
     account_views,
+    accounts_center_views,
     admin_catalog_views,
     admin_console_views,
     admin_panel_views,
@@ -112,6 +113,44 @@ urlpatterns = [
         "auth/sign-in-preferences",
         account_views.sign_in_preferences_view,
         name="auth-sign-in-preferences",
+    ),
+    # ADR-072: the Accounts Control Center - the person's own account on
+    # WorkEasy360 Accounts (served there only, and only while it hosts
+    # identity: W360_ACCOUNTS_IDENTITY).
+    path(
+        "auth/account/products",
+        accounts_center_views.products_view,
+        name="auth-account-products",
+    ),
+    path(
+        "auth/account/products/<uuid:organization_id>/<str:product_code>/launch",
+        accounts_center_views.launch_view,
+        name="auth-account-product-launch",
+    ),
+    path(
+        "auth/account/connections",
+        accounts_center_views.connections_view,
+        name="auth-account-connections",
+    ),
+    path(
+        "auth/account/connections/<str:product_code>/sign-out",
+        accounts_center_views.product_sign_out_view,
+        name="auth-account-connection-sign-out",
+    ),
+    path(
+        "auth/account/sessions",
+        accounts_center_views.sessions_view,
+        name="auth-account-sessions",
+    ),
+    path(
+        "auth/account/history",
+        accounts_center_views.history_view,
+        name="auth-account-history",
+    ),
+    path(
+        "auth/account/profile",
+        accounts_center_views.profile_view,
+        name="auth-account-profile",
     ),
     # The invitee's side of an invitation: reached before any membership
     # exists, so not under the tenant path. POST for both, so the token never
@@ -586,6 +625,12 @@ urlpatterns = [
         "orgs/<slug:org_slug>/subscription-items/<uuid:subscription_item_id>/change-plan",
         commercial_views.change_plan_view,
         name="subscription-change-plan",
+    ),
+    # ADR-073: end one product at its period end, keeping the others.
+    path(
+        "orgs/<slug:org_slug>/subscription-items/<uuid:subscription_item_id>/end",
+        commercial_views.end_product_view,
+        name="subscription-item-end",
     ),
     # --- remote product integration: the external trust boundary ---
     #
@@ -1255,6 +1300,12 @@ _admin = [
         admin_views.item_change_quantity_view,
         name="admin-item-change-quantity",
     ),
+    # ADR-073: staff end one product at its period end or, with a reason, now.
+    path(
+        "admin/customers/<uuid:organization_id>/items/<uuid:item_id>/end",
+        admin_views.item_end_view,
+        name="admin-item-end",
+    ),
     path(
         "admin/customers/<uuid:organization_id>/entitlement-overrides",
         admin_views.entitlement_override_view,
@@ -1489,6 +1540,11 @@ _admin = [
         "admin/products/<str:product_code>/integration/readiness",
         admin_product_views.integration_readiness_view,
         name="admin-product-integration-readiness",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/kit",
+        admin_product_views.integration_kit_view,
+        name="admin-product-integration-kit",
     ),
     path(
         "admin/catalog/products/<uuid:product_id>/trial",

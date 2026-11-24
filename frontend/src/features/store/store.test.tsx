@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { expectNoViolations, mockApi, ok, type Reply } from "@/features/controlplane/testSupport";
+import { PortalsProvider } from "@/lib/portalContext";
+import { storeNavigation } from "./StoreAuth";
 import { checkoutNavigation } from "@/features/console/BillingScreen";
 import { StoreShell } from "./StoreShell";
 import { StoreHomeScreen } from "./StoreHome";
@@ -352,6 +354,38 @@ describe("the checkout", () => {
     expect(screen.getByRole("form", { name: "Sign in" })).toBeInTheDocument();
     expect(await screen.findByText("Advanced")).toBeInTheDocument(); // the order summary
     expect(screen.getByText("Sign in to see the final amount and pay.")).toBeInTheDocument();
+  });
+
+  it("with WorkEasy360 Accounts hosting identity, signs in and up there and comes back to this checkout (ADR-073)", async () => {
+    search = new URLSearchParams(`plan=${PLAN_PRO}&interval=annual`);
+    mockApi(shellRoutes(false));
+    const assign = vi.spyOn(storeNavigation, "assign").mockImplementation(() => undefined);
+    window.history.replaceState(null, "", `/store/checkout?plan=${PLAN_PRO}&interval=annual`);
+    const origins = {
+      admin: "https://admin.workeasy360.com",
+      partner: "https://partner.workeasy360.com",
+      app: "https://app.workeasy360.com",
+      auth: "https://accounts.workeasy360.com",
+      store: "https://store.workeasy360.com",
+      accountsIdentity: true,
+    };
+    const { container } = render(
+      <PortalsProvider origins={origins}>
+        <StoreShell>
+          <CheckoutScreen />
+        </StoreShell>
+      </PortalsProvider>,
+    );
+    // No password field on the Store: one button, to the Store's own /login (the hand-off).
+    fireEvent.click(await screen.findByRole("button", { name: /Sign in with WorkEasy360 Accounts/ }));
+    expect(screen.queryByRole("form", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(assign).toHaveBeenLastCalledWith(`/login?next=${encodeURIComponent(`/store/checkout?plan=${PLAN_PRO}&interval=annual`)}`);
+    await expectNoViolations(container);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Create New Account/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Create an account on WorkEasy360 Accounts/ }));
+    expect(assign.mock.calls.at(-1)?.[0]).toMatch(/^\/signup\?next=%2Fstore%2Fcheckout/);
+    window.history.replaceState(null, "", "/");
   });
 
   it("pays part from the Platform Wallet and the rest online - the server's amounts", async () => {

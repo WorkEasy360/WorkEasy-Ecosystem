@@ -213,6 +213,13 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     worth special-casing the middleware for credentialed endpoints, which
     would reintroduce exactly the kind of "does this endpoint check the
     session or not" ambiguity that test exists to rule out.
+
+    **ADR-072:** +4. The Accounts Control Center's record of this sign-in,
+    written after the code is spent (``ecosystem_views._record_connection``):
+    the person's Connected Logins row - an update, or on a first sign-in the
+    savepoint-guarded insert that a concurrent first sign-in cannot double -
+    and their Login History entry. Once per product sign-in, like the rest of
+    this budget; a failure to record never costs the product its tokens.
     """
     registration = register_product("crm")
     org = entitled_org("crm")
@@ -222,7 +229,7 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     granted = client.get(AUTHORIZE, _authorize_params(registration, org, challenge))
     code = parse_qs(urlsplit(granted["Location"]).query)["code"][0]
 
-    with django_assert_max_num_queries(30):
+    with django_assert_max_num_queries(34):
         response = client.post(
             TOKEN,
             {

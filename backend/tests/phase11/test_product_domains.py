@@ -495,7 +495,21 @@ def test_the_operator_command_attests_first_party_hostnames(staff_factory):
     )
     call_command("register_products", actor=staff_user.email, activate_integrations=True)
     assert set(ProductDomain.objects.values_list("method", flat=True)) == {"attested"}
-    assert _audited("ecosystem.integration.domain_attested") == 4
+    # One first-party hostname per registered product (each on its own host).
+    from pathlib import Path
+    from urllib.parse import urlsplit
+
+    registry = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "infra" / "ecosystem" / "products.json"
+        ).read_text(encoding="utf-8")
+    )["products"]
+    hostnames = {
+        (p["code"], urlsplit(u).hostname)
+        for p in registry
+        for u in [p["integration"]["launch_url"], *p["integration"]["redirect_uris"]]
+    }
+    assert _audited("ecosystem.integration.domain_attested") == len(hostnames) == 12
 
 
 # --- the staff API -------------------------------------------------------------------------
@@ -611,10 +625,24 @@ def test_readiness_is_ready_when_everything_is_in_place(staff_login, staff, dns,
         manifest_version="2026-11-15",
         backchannel_logout_uri=f"{ORIGIN}/auth/backchannel-logout",
     )
-    from workeasy360.platform.ecosystem.models import ProductIntegration
+    from django.utils import timezone
 
+    from workeasy360.platform.ecosystem.models import (
+        BackchannelLogout,
+        ProductIntegration,
+    )
+
+    # "In place" includes the evidence (2026-11-18): a completed sign-in and an
+    # acknowledged logout, not only the configuration.
     ProductIntegration.objects.filter(pk=live["integration"].pk).update(
-        health_status="healthy"
+        health_status="healthy", last_token_at=timezone.now()
+    )
+    BackchannelLogout.objects.create(
+        integration_id=live["integration"].pk,
+        user_id=live["integration"].pk,
+        reason="signed_out",
+        status="delivered",
+        finished_at=timezone.now(),
     )
     body = client.get(READINESS).json()
     assert body["verdict"] == "ready", body

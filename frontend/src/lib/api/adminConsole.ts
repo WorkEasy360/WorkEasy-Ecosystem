@@ -324,6 +324,9 @@ export interface UserDetail extends Omit<UserRow, "lifecycle" | "products" | "su
     access_class: string;
     subscription_status: string;
     products: string[];
+    /** ADR-072 (while WorkEasy360 Accounts hosts identity): the products this
+     * person holds a seat in, in this organization. */
+    seats?: string[];
   }[];
   sessions: {
     session_id: string;
@@ -334,6 +337,34 @@ export interface UserDetail extends Omit<UserRow, "lifecycle" | "products" | "su
     device_label: string;
   }[];
   activity: { occurred_at: string; kind: string; reason: string; ip_prefix: string; device_label: string }[];
+  // --- ADR-072, present only while WorkEasy360 Accounts hosts identity ---------
+  /** The person's central id: the `sub` every product links them by. */
+  central_user_id?: string;
+  /** What each product's sign-ins recorded (never a token or a session key). */
+  connections?: StaffUserConnection[];
+  /** Sign-ins and product sign-ins, newest first (the latest 50). */
+  sign_in_history?: { occurred_at: string; kind: string; reason: string; ip_prefix: string; device_label: string; product_name: string | null }[];
+  /** Known sessions, one row per sign-in (device). */
+  sign_ins?: { session_id: string; signed_in_at: string; last_active_at: string; expires_at: string; ip_prefix: string; device_label: string; portal_sessions: number }[];
+}
+
+export interface StaffUserConnection {
+  product_code: string;
+  name: string;
+  domain: { host: string; verified: boolean };
+  takes_backchannel_logout: boolean;
+  platform_sign_in: "open" | "ended" | "untracked" | "none";
+  platform_sign_in_since: string | null;
+  platform_sign_in_ended_at: string | null;
+  last_sign_out: { status: "delivered" | "pending" | "failed"; requested_at: string; finished_at: string | null } | null;
+  organizations: {
+    organization_id: string;
+    name: string;
+    first_sign_in_at: string;
+    last_sign_in_at: string;
+    sign_in_count: number;
+    last_activity_at: string | null;
+  }[];
 }
 
 export type UserAction = "sign-out" | "unlock" | "disable" | "enable";

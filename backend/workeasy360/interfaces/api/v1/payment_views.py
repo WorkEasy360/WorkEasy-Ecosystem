@@ -396,6 +396,9 @@ def refund_view(
                 or body.get("idempotency_key")
                 or ""
             )[:129],
+            # ADR-073 (G8): ``keep`` (money only, the default), ``period_end`` or
+            # ``now`` - what happens to the product lines the payment paid for.
+            end_access=body.get("end_access", refunds.END_ACCESS_KEEP),
         ),
         status=202,
     )

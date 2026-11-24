@@ -168,6 +168,39 @@ def backchannel_delivery_summary(ctx: TenantContext, *, client_id: str) -> dict[
     return backchannel.delivery_summary(row)
 
 
+def sign_in_evidence(ctx: TenantContext, *, client_id: str) -> dict[str, Any]:
+    """What proves a product's sign-in and logout work: when it last redeemed a
+    code and under which issuer (to the hour), and how many back-channel
+    logouts it has acknowledged. Staff-only, like every integration read here;
+    facts only, never an access decision."""
+    from workeasy360.platform.ecosystem.models import (
+        BackchannelLogout,
+        BackchannelLogoutStatus,
+        ProductIntegration,
+    )
+
+    authz.require(ctx, "platform.integration.view")
+    authz.require_platform_staff(
+        ctx,
+        operation="ecosystem.integration.get",
+        permission="platform.integration.view",
+    )
+    row = (
+        ProductIntegration.objects.filter(client_id=client_id)
+        .values("pk", "last_token_at", "last_token_issuer")
+        .first()
+    )
+    if row is None:
+        return {"last_token_at": None, "last_token_issuer": "", "logouts_delivered": 0}
+    return {
+        "last_token_at": row["last_token_at"],
+        "last_token_issuer": row["last_token_issuer"],
+        "logouts_delivered": BackchannelLogout.objects.filter(
+            integration_id=row["pk"], status=BackchannelLogoutStatus.DELIVERED.value
+        ).count(),
+    }
+
+
 def credentials(ctx: TenantContext, *, client_id: str) -> list[CredentialDTO]:
     """Credential metadata for one integration.
 
@@ -294,6 +327,23 @@ def has_return_destinations(product_code: str) -> bool | None:
     if row is None:
         return None
     return bool((row["manifest"] or {}).get("redirect_uris"))
+
+
+def sign_in_proven(product_code: str) -> bool | None:
+    """Whether this product has completed a WorkEasy360 sign-in (redeemed an
+    authorization code) since sign-ins were recorded, or ``None`` when it has no
+    integration that signs people in with WorkEasy360. A yes or no only, as
+    ungated as :func:`has_return_destinations`."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    row = (
+        ProductIntegration.objects.filter(product_code=str(product_code))
+        .values("manifest", "last_token_at")
+        .first()
+    )
+    if row is None or (row["manifest"] or {}).get("sign_in_mode") == "local_only":
+        return None
+    return row["last_token_at"] is not None
 
 
 def launch_urls(product_codes: Iterable[str]) -> dict[str, str]:

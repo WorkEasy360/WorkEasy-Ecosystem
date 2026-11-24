@@ -84,11 +84,17 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
     # ADR-059: every web portal has its own sign-in page, so the one sign-in
     # endpoint answers on each of them (the session cookie is that host's).
     ("/api/v1/auth/login", True, frozenset(portals.WEB_PORTALS)),
+    # ADR-072: the Accounts Control Center is WorkEasy360 Accounts' own - the
+    # person's products, connected logins, sessions and history on that host
+    # only (and only while it hosts identity: the views answer 404 otherwise).
+    ("/api/v1/auth/account/", False, frozenset({portals.AUTH})),
     # ADR-066: Switch Account starts on a portal and is finished on the
     # central sign-in host, whose session it may end.
     ("/api/v1/auth/switch-account/finish", True, frozenset({portals.AUTH})),
     ("/api/v1/auth/switch-account", True, frozenset(portals.ACCOUNT_PORTALS)),
-    ("/api/v1/auth/handoff/redeem", True, frozenset(portals.DESTINATIONS)),
+    # ADR-073: and on the Store, which redeems only while it signs in through
+    # WorkEasy360 Accounts (the view answers 404 there otherwise, as here).
+    ("/api/v1/auth/handoff/redeem", True, frozenset(portals.HANDOFF_DESTINATIONS)),
     # ADR-065: the Store's "My Account" - issued on the Store, spent on User Admin.
     ("/api/v1/auth/account-pass/enter", True, frozenset({portals.APP})),
     ("/api/v1/auth/account-pass", True, frozenset({portals.STORE})),
@@ -103,8 +109,22 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
 )
 
 
+#: ADR-066's start of Switch Account, which a portal answers.
+SWITCH_ACCOUNT_PATH: Final = "/api/v1/auth/switch-account"
+
+
+def _accounts_identity() -> bool:
+    from workeasy360.platform.identity import portals as portal_links
+
+    return portal_links.accounts_identity()
+
+
 def allowed_portals(path: str) -> frozenset[str] | None:
     """The portals that serve ``path``, or ``None`` when every host does."""
+    if path in (SWITCH_ACCOUNT_PATH, f"{SWITCH_ACCOUNT_PATH}/") and _accounts_identity():
+        # ADR-072: while WorkEasy360 Accounts hosts identity, its account page
+        # starts Switch Account too (its own sign-in is the one that ends).
+        return frozenset({*portals.ACCOUNT_PORTALS, portals.AUTH})
     if STAFF_UNDER_ORGS.match(path):
         return frozenset({portals.ADMIN})
     if STORE_UNDER_ORGS.match(path):
