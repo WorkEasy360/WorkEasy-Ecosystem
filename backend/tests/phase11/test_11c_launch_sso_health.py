@@ -681,6 +681,34 @@ def _edit(client, code, body, method="patch"):
 
 def test_a_launch_address_can_be_changed_and_is_audited(live, staff_login):
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.manage")
+    # ADR-070: a live product may not be pointed at an unproven hostname...
+    refused = _edit(client, "crm", {"launch_url": "https://new.crm.example.com/open"})
+    assert refused.status_code == 409, refused.content
+    assert refused.json()["hostnames"] == ["new.crm.example.com"]
+    # ...so the owner proves it first (request, publish the TXT record, verify).
+    from workeasy360.commercial.partners import domains as partner_domains
+
+    asked = client.post(
+        "/api/v1/admin/products/crm/integration/domains",
+        json.dumps({"hostname": "new.crm.example.com"}),
+        content_type="application/json",
+    ).json()
+    entry = next(d for d in asked["domains"] if d["hostname"] == "new.crm.example.com")
+
+    class _Dns:
+        def txt_values(self, name):
+            return [entry["record_value"]] if name == entry["record_name"] else []
+
+    previous = partner_domains.set_txt_resolver(_Dns())
+    try:
+        proven = client.post(
+            "/api/v1/admin/products/crm/integration/domains/verify",
+            json.dumps({"hostname": "new.crm.example.com"}),
+            content_type="application/json",
+        )
+    finally:
+        partner_domains.set_txt_resolver(previous)
+    assert proven.json()["outcome"] == "verified", proven.content
     response = _edit(client, "crm", {"launch_url": "https://new.crm.example.com/open"})
     assert response.status_code == 200, response.content
     assert response.json()["launch_url"] == "https://new.crm.example.com/open"

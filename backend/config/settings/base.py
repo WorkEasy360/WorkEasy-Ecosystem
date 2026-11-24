@@ -743,6 +743,14 @@ CELERY_BEAT_SCHEDULE = {
     # verified domain is re-checked and disabled after repeated misses. Heavy:
     # a run is up to 200 DNS lookups of several seconds each, which must never
     # hold a worker that subscription due-processing is waiting for.
+    # ADR-070. DNS-proven product domains are re-checked; a missing record on
+    # repeated checks marks the domain lapsed (shown to staff, never a silent
+    # suspension). Heavy for the same reason as the partner re-check.
+    "products-recheck-domains": {
+        "task": "commercial.controlplane.recheck_product_domains",
+        "schedule": env.float("W360_BEAT_PRODUCT_DOMAIN_RECHECK_S", 21600.0),
+        "options": {"queue": "heavy", "expires": 21000},
+    },
     "partners-recheck-domains": {
         "task": "commercial.partners.recheck_domains",
         "schedule": env.float("W360_BEAT_DOMAIN_RECHECK_S", 21600.0),
@@ -1554,6 +1562,9 @@ CONTROL_PLANE_RATE_LIMITS.update(
         # press makes one outbound request to a third party's server.
         "product_health_check_user": (env.int("W360_RL_PRODUCT_HEALTH_USER", 10), 60),
         "product_health_check_ip": (env.int("W360_RL_PRODUCT_HEALTH_IP", 30), 60),
+        # ADR-070: each verify is a DNS lookup the platform makes.
+        "product_domain_verify_user": (env.int("W360_RL_PRODUCT_DOMAIN_USER", 10), 60),
+        "product_domain_verify_ip": (env.int("W360_RL_PRODUCT_DOMAIN_IP", 30), 60),
         # ADR-051: Product Manager image uploads (each stores and scans a file).
         "product_media_upload_user": (env.int("W360_RL_PRODUCT_MEDIA_USER", 60), 60),
         "product_media_upload_ip": (env.int("W360_RL_PRODUCT_MEDIA_IP", 120), 60),

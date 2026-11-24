@@ -539,6 +539,29 @@ class ManifestRejected(ProductIntegrationError):
         super().__init__(message or "The manifest was rejected.", field=field, **context)
 
 
+class ProductDomainUnverified(ProductIntegrationError):
+    """A registration would send browsers or tokens to a hostname whose
+    control the product's owner has not proven (ADR-070).
+
+    409, like the rest of this family: the manifest is well-formed; what is
+    missing is durable state - a verified domain. ``hostnames`` names every
+    unproven hostname so one round trip tells staff everything to publish.
+    """
+
+    code = "product_domain_unverified"
+    http_status = 409
+
+    def __init__(
+        self, message: str = "", *, hostnames: tuple[str, ...] = (), **context: Any
+    ) -> None:
+        super().__init__(
+            message or "Prove control of the product's domains first.",
+            field="hostname",
+            hostnames=list(hostnames),
+            **context,
+        )
+
+
 class SignInPreferenceInvalid(ProductIntegrationError):
     """A sign-in preference that cannot be stored (ADR-044): an unknown value,
     a product with no integration, or a choice the product does not offer -

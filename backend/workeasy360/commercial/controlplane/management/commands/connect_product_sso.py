@@ -37,10 +37,15 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from workeasy360.contracts.errors import ManifestRejected, ProductIntegrationError
+from workeasy360.contracts.errors import (
+    ManifestRejected,
+    ProductDomainUnverified,
+    ProductIntegrationError,
+)
 from workeasy360.contracts.values.manifest import SUPPORTED_SCOPES
 from workeasy360.platform.authz.control_plane import acting_scope, platform_context
 from workeasy360.platform.ecosystem import discovery
+from workeasy360.platform.ecosystem import domains as product_domains
 from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
 from workeasy360.platform.ecosystem import services as ecosystem
 from workeasy360.platform.identity.email import normalize_email
@@ -119,6 +124,16 @@ class Command(BaseCommand):
             help="The product's own sign-in page (required with --sign-in-mode sso_optional).",
         )
         parser.add_argument(
+            "--attest-domains",
+            action="store_true",
+            help=(
+                "ADR-070: vouch, as the operator on the platform host, for every "
+                "hostname of this registration - only for first-party hosts you "
+                "control. Audited. Without it a draft stays a draft until its "
+                "domains are proven (TXT records, Super Admin -> Domains)."
+            ),
+        )
+        parser.add_argument(
             "--post-logout-redirect-uri",
             action="append",
             default=None,
@@ -168,11 +183,22 @@ class Command(BaseCommand):
                 label=str(options["label"]),
                 valid_days=int(options["valid_days"]),
             )
+            unproven: list[str] = []
             if integration.status == "draft":
-                ecosystem.transition(
-                    sctx, client_id=integration.client_id, to_status="active"
-                )
-                status = "active"
+                row = product_domains.integration_by_code(product)
+                if options["attest_domains"]:
+                    product_domains.attest_domains(
+                        sctx, row, reason="connect_product_sso --attest-domains"
+                    )
+                try:
+                    ecosystem.transition(
+                        sctx, client_id=integration.client_id, to_status="active"
+                    )
+                    status = "active"
+                except ProductDomainUnverified as exc:
+                    # ADR-070: never activated on a hostname nobody proved.
+                    unproven = list(exc.context.get("hostnames", []))
+                    status = "draft"
             else:
                 status = integration.status
             issuer = discovery.document()["issuer"]
@@ -189,6 +215,20 @@ class Command(BaseCommand):
             f"{product}: redirect URIs and scopes updated, credential registered, integration {status}"
             f" (sign-in mode {manifest.get('sign_in_mode', 'sso_only')})."
         )
+        if unproven:
+            self.stdout.write(
+                "Not activated: control of these hostnames is not proven yet. Publish "
+                "each TXT record, then verify and activate in Super Admin (or rerun "
+                "with --attest-domains for first-party hosts you control):"
+            )
+            listed = product_domains.domains_json(
+                product_domains.integration_by_code(product)
+            )
+            for entry in listed["domains"]:
+                if entry["hostname"] in unproven:
+                    self.stdout.write(
+                        f'  {entry["record_name"]}  TXT  "{entry["record_value"]}"'
+                    )
         self.stdout.write("Set these in the product's environment:")
         self.stdout.write(f"  WORKEASY360_ISSUER={issuer}")
         self.stdout.write(f"  WORKEASY360_CLIENT_ID={integration.client_id}")

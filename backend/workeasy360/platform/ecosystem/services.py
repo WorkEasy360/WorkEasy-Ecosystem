@@ -51,7 +51,7 @@ from workeasy360.contracts.values.manifest import ManifestError, parse_manifest
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
-from workeasy360.platform.ecosystem import clientauth, keys
+from workeasy360.platform.ecosystem import clientauth, domains, keys
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
@@ -156,6 +156,10 @@ def register_integration(ctx: TenantContext, *, manifest: Any) -> Any:
                 product_code=str(parsed.product_code),
             ) from None
 
+        # ADR-070: a draft may name any valid hostname; each gains a proof to
+        # publish, and activation requires them all.
+        domains.ensure_domains(integration, domains.hostnames_of(parsed))
+
         audit.record(
             ctx,
             "ecosystem.integration.registered",
@@ -195,7 +199,10 @@ def update_manifest(ctx: TenantContext, *, client_id: str, manifest: Any) -> Any
     CRM on Monday and Books on Tuesday, while every token ever issued under
     it still says CRM.
     """
-    from workeasy360.platform.ecosystem.models import ProductIntegration
+    from workeasy360.platform.ecosystem.models import (
+        IntegrationStatus,
+        ProductIntegration,
+    )
 
     _authorise(ctx, "platform.integration.update", "ecosystem.integration.update")
     parsed = _parse(manifest)
@@ -215,6 +222,18 @@ def update_manifest(ctx: TenantContext, *, client_id: str, manifest: Any) -> Any
             )
 
         previous = integration.manifest_obj
+        after = domains.hostnames_of(parsed)
+        if integration.status_enum in (
+            IntegrationStatus.ACTIVE,
+            IntegrationStatus.SUSPENDED,
+        ):
+            # ADR-070: hostnames it already used are not re-litigated by an
+            # unrelated edit; a hostname it did not use must be proven first.
+            added = sorted(set(after) - set(domains.hostnames_of(previous)))
+            domains.require_verified(
+                integration, added, action="point this product at a new hostname"
+            )
+        domains.ensure_domains(integration, after)
         integration.manifest = parsed.as_dict()
         integration.save(update_fields=["manifest", "updated_at"])
 
@@ -297,6 +316,14 @@ def transition(
                 f"integration transition.",
                 from_status=current.value,
                 to_status=target.value,
+            )
+
+        if target is IntegrationStatus.ACTIVE:
+            # ADR-070: nothing is sent to a hostname nobody has proven.
+            domains.require_verified(
+                integration,
+                domains.hostnames_of(integration.manifest or {}),
+                action="activate this integration",
             )
 
         now = timezone.now()

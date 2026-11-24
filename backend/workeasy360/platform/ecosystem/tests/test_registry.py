@@ -292,6 +292,11 @@ def test_a_redirect_uri_change_records_both_sides_in_audit(
     registration = register_product("crm")
 
     with in_tenant(ctx):
+        # ADR-070: a live product may be pointed only at a proven hostname.
+        from workeasy360.platform.ecosystem import domains
+
+        row = domains.request_domain(ctx, registration["integration"], "crm.example.com")
+        domains.record_check(row.id, expected_token=row.token, found=[row.token], ctx=ctx)
         services.update_manifest(
             ctx,
             client_id=registration["client_id"],

@@ -227,7 +227,17 @@ def test_no_new_brand_or_domain_model_exists_anywhere():
         if isinstance(node, ast.ClassDef)
         and re.search(r"Brand|Domain|WhiteLabel", node.name)
     }
-    assert found == {"PartnerBrand", "PartnerDomain"}, found
+    assert found == {
+        "PartnerBrand",
+        "PartnerDomain",
+        # ADR-070: proof that a *product registration's* hostnames belong to
+        # its owner, before codes or logout tokens are sent there. Not
+        # branding and not a white-label host: it resolves no tenant and
+        # serves nothing; it only gates what the ecosystem may send where.
+        "ProductDomain",
+        "ProductDomainStatus",
+        "ProductDomainMethod",
+    }, found
 
 
 def test_the_commission_and_pricing_models_are_the_frozen_set():

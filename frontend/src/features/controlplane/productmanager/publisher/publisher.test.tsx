@@ -256,6 +256,43 @@ describe("Product Publisher", () => {
     expect(screen.getByRole("button", { name: "Update Store" })).toBeInTheDocument();
   });
 
+  it("Advanced settings take a back-channel logout URL only with single sign-on, refuse another origin, and say hostnames are proven before activation", async () => {
+    const saved = state({}, [STARTER_ROW]);
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/publisher`]: [ok(BOOT)],
+      [`POST ${ADMIN}/products/publisher`]: [ok(saved)],
+      [`GET ${ADMIN}/products/p1/publisher`]: [ok(saved)],
+    });
+    const { container } = renderPublisher();
+    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Acme Desk" } });
+    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "https://desk.example.com/" } });
+    expect(screen.getByText(/control of every hostname it uses .* must be proven with a DNS/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Back-channel logout URL (optional)")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/Customers sign in through WorkEasy360/));
+    fireEvent.change(screen.getByLabelText("Sign-in callback URL"), { target: { value: "https://desk.example.com/api/auth/callback" } });
+    // A look-alike host is another origin.
+    fireEvent.change(screen.getByLabelText("Back-channel logout URL (optional)"), { target: { value: "https://desk.example.com.evil.example/logout" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+    expect(await screen.findByText("To save, fix: Back-channel logout URL.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Back-channel logout URL (optional)")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("heading", { name: "Advanced settings" }).closest("details")).toHaveAttribute("open");
+    expect(calls.filter((c) => c.key.startsWith("POST"))).toHaveLength(0);
+    await expectNoViolations(container);
+
+    fireEvent.change(screen.getByLabelText("Back-channel logout URL (optional)"), { target: { value: "https://desk.example.com/api/auth/backchannel-logout" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/publisher`)).toBe(true));
+    const post = calls.find((c) => c.key === `POST ${ADMIN}/products/publisher`)!;
+    expect((post.body as { integration: unknown }).integration).toEqual({
+      launch_url: "https://desk.example.com/",
+      sso_enabled: true,
+      redirect_uri: "https://desk.example.com/api/auth/callback",
+      health_url: "",
+      backchannel_logout_uri: "https://desk.example.com/api/auth/backchannel-logout",
+    });
+  });
+
   it("Save Draft saves without publishing, and a second save updates the same product (no duplicate)", async () => {
     const saved = state({}, [STARTER_ROW]);
     const calls = mockApi({
@@ -446,6 +483,26 @@ describe("Product Publisher rules", () => {
     expect(paid.plans[0].prices).toEqual({ monthly: 49900 });
     expect(descriptionFromHighlights(" 5 users \n\nAutomation")).toBe("- 5 users\n- Automation");
     expect(highlightsFromDescription("- 5 users\n- Automation")).toBe("5 users\nAutomation");
+  });
+
+  it("checks a back-channel logout URL as the registry does, and never sends one without single sign-on", () => {
+    const sso = filled({ launchUrl: "https://desk.example.com/", ssoEnabled: true, redirectUri: "https://desk.example.com/api/auth/callback" });
+    const problem = (patch: Partial<PublisherDraft>) => check({ ...sso, ...patch }, books, { publish: false, takenSlugs: new Set() }).backchannelUri;
+    expect(problem({ backchannelUri: "https://desk.example.com/api/auth/backchannel-logout" })).toBeUndefined();
+    expect(problem({ backchannelUri: "http://desk.example.com/bc" })).toMatch(/https/);
+    expect(problem({ backchannelUri: "https://desk.example.com/bc?x=1" })).toMatch(/query/);
+    expect(problem({ backchannelUri: "https://desk.example.com/bc#x" })).toMatch(/fragment/);
+    expect(problem({ backchannelUri: "https://user@desk.example.com/bc" })).toMatch(/user name/);
+    expect(problem({ backchannelUri: "https://*.example.com/bc" })).toMatch(/Wildcards/);
+    expect(problem({ backchannelUri: "https://desk.example.com.evil.example/bc" })).toMatch(/same origin/);
+    expect(problem({ backchannelUri: "https://desk.example.com:8443/bc" })).toMatch(/same origin/);
+    expect(problem({ redirectUri: "", backchannelUri: "https://desk.example.com/bc" })).toMatch(/callback URL first/);
+    expect(problem({ ssoEnabled: false, backchannelUri: "nonsense" })).toBeUndefined();
+    const integration = (d: PublisherDraft) => (toRequest(d, books) as { integration?: Record<string, unknown> }).integration;
+    expect(integration({ ...sso, backchannelUri: " https://desk.example.com/bc " })?.backchannel_logout_uri).toBe("https://desk.example.com/bc");
+    expect(integration({ ...sso, ssoEnabled: false, backchannelUri: "https://desk.example.com/bc" })).not.toHaveProperty("backchannel_logout_uri");
+    expect(integration(sso)).not.toHaveProperty("backchannel_logout_uri");
+    expect(fieldKey("backchannel_logout_uri")).toBe("backchannelUri");
   });
 
   it("maps a server field to the page's", () => {

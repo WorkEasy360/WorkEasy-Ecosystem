@@ -55,6 +55,7 @@ from workeasy360.contracts.enums import (
 from workeasy360.contracts.errors import CatalogValidationError
 from workeasy360.contracts.values.manifest import MANIFEST_VERSION
 from workeasy360.platform.authz.control_plane import acting_scope, platform_context
+from workeasy360.platform.ecosystem import domains as product_domains
 from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
 from workeasy360.platform.ecosystem import services as ecosystem
 from workeasy360.platform.identity.email import normalize_email
@@ -355,6 +356,18 @@ class Command(BaseCommand):
             status = integration.status
             self._say(code, f"integration exists ({status}) - left unchanged")
         if activate and status == "draft" and not dry:
+            # ADR-070: activation needs every hostname proven. These are the
+            # first-party hostnames declared in this file; the operator
+            # running the command on the platform host vouches for them.
+            attested = product_domains.attest_domains(
+                sctx,
+                product_domains.integration_by_code(code),
+                reason="register_products --activate-integrations",
+            )
+            if attested:
+                self._say(
+                    code, f"domains attested by the operator: {', '.join(attested)}"
+                )
             ecosystem.transition(
                 sctx, client_id=integration.client_id, to_status="active"
             )
