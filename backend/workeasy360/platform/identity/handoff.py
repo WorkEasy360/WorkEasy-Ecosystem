@@ -188,12 +188,27 @@ def _live_redemption(row: SessionHandoff, now: Any) -> Redemption | None:
     )
 
 
-def end_sign_in(user_id: Any, sign_in_id: object) -> int:
+def end_sign_in(user_id: Any, sign_in_id: object, *, reason: str = "") -> int:
     """End every session of one sign-in - the central one and each portal's
-    (ADR-043). Returns how many were ended."""
+    (ADR-043) - and, in the same transaction, owe a back-channel logout to
+    every product that sign-in opened (ADR-069). Returns how many sessions
+    were ended."""
+    from django.db import transaction
+
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_SIGNED_OUT,
+        notify_sign_ins_ended,
+    )
+
     try:
         wanted = UUID(str(sign_in_id))
     except (TypeError, ValueError):
         return 0
-    deleted, _ = UserSession.objects.filter(user_id=user_id, sign_in_id=wanted).delete()
+    with transaction.atomic():
+        deleted, _ = UserSession.objects.filter(
+            user_id=user_id, sign_in_id=wanted
+        ).delete()
+        notify_sign_ins_ended(
+            user_id=user_id, sign_in_ids=(wanted,), reason=reason or REASON_SIGNED_OUT
+        )
     return int(deleted)

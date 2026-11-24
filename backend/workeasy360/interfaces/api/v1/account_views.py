@@ -164,6 +164,65 @@ def sessions_revoke_others_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "ended": ended})
 
 
+#: How long "sign out everywhere" waits for products to confirm before it
+#: answers. Workeasy360's own sessions end before this; the wait is only so
+#: the answer can say which products have already confirmed (ADR-069).
+SIGN_OUT_EVERYWHERE_WAIT_S = 4.0
+
+
+@require_http_methods(["POST"])
+@never_cache
+def sign_out_everywhere_view(request: HttpRequest) -> JsonResponse:
+    """End every Workeasy360 session of this person - this one included - and
+    every product session that takes back-channel logout (ADR-069).
+
+    The answer reports what is true, not what was hoped: ``workeasy360`` is
+    the number of platform sessions ended (synchronous, done), and
+    ``products`` lists each product that was told, with ``delivered`` or
+    ``pending``. A pending product is still being retried by the delivery
+    worker; until it confirms, its session ends at its next entitlement
+    re-check at the latest.
+    """
+    import time
+
+    from django.contrib.auth import logout as django_logout
+
+    from workeasy360.platform.ecosystem import backchannel
+
+    user = _user(request)
+    blocked = limited(request, "session_revoke", user=user)
+    if blocked is not None:
+        return blocked
+    user_id = user.id
+    started = time.monotonic()
+    ended = account.sign_out_everywhere(user_id)
+    django_logout(request)
+
+    products = backchannel.pending_for_user(user_id)
+    while any(p["status"] == "pending" for p in products):
+        if time.monotonic() - started > SIGN_OUT_EVERYWHERE_WAIT_S:
+            break
+        time.sleep(0.25)
+        products = backchannel.pending_for_user(user_id)
+    return JsonResponse(
+        {
+            "ok": True,
+            "workeasy360": {"sessions_ended": ended},
+            "products": [
+                {
+                    "product_code": p["product_code"],
+                    "name": p["display_name"],
+                    "status": "delivered"
+                    if p["status"] == "delivered"
+                    else ("pending" if p["status"] == "pending" else "failed"),
+                }
+                for p in products
+            ],
+            "complete": all(p["status"] == "delivered" for p in products),
+        }
+    )
+
+
 @require_http_methods(["GET"])
 @never_cache
 def activity_view(request: HttpRequest) -> JsonResponse:

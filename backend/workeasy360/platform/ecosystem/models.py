@@ -230,6 +230,18 @@ class ProductIntegration(models.Model):
     #: response body, a header or an address.
     health_detail = models.CharField(max_length=64, blank=True, default="")
 
+    #: ADR-069 with ADR-067: the issuer this product last redeemed a code
+    #: under - which is the issuer it is configured with, because it reaches
+    #: the token endpoint through its own issuer's discovery document. A
+    #: logout token is signed as this issuer while it is still one of the
+    #: platform's configured issuers, so a product that trusts only one of the
+    #: two sign-in names during the move is never sent one naming the other.
+    #: Written only when it changes; never an access decision. ``db_default``
+    #: so code without this field can still insert a registration mid-deploy.
+    last_token_issuer = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -512,6 +524,13 @@ class AuthorizationCode(models.Model):
     #: code without it is judged as the least-trusted session. Lives exactly
     #: as long as the code (pruned with it).
     session_facts = models.JSONField(null=True, blank=True)
+    #: The Workeasy360 sign-in (``identity.UserSession.sign_in_id``, ADR-043)
+    #: that authorized this code. Carried to the token endpoint, where it
+    #: becomes the ID token's ``sid`` for a product that takes back-channel
+    #: logout and is recorded as a ``ProductSignIn`` (ADR-069). Nullable: a
+    #: code minted by the previous release, or by a session that predates
+    #: sign-in ids, simply has no ``sid``.
+    sign_in_id = models.UUIDField(null=True, blank=True)
 
     expires_at = models.DateTimeField()
     #: Set by a conditional UPDATE, which is what makes single use hold under
@@ -711,3 +730,105 @@ class UserSignInPreference(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.product_code or '*'}={self.mode} for {self.user_id}"
+
+
+# --- back-channel logout (ADR-069) ---------------------------------------------
+
+
+class ProductSignIn(models.Model):
+    """One product signed in to from one Workeasy360 sign-in.
+
+    Written at the token endpoint for an integration that registered a
+    ``backchannel_logout_uri``, and only for those: it is the list of who must
+    be told when that sign-in ends. Not tenant-scoped on purpose - a sign-in
+    belongs to a person, not an organization - and it holds no personal data
+    beyond the subject id the product already has.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    integration = models.ForeignKey(
+        ProductIntegration, on_delete=models.CASCADE, related_name="product_sign_ins"
+    )
+    user_id = models.UUIDField()
+    #: ``None`` for a code that carried no sign-in id; such a row can still be
+    #: ended by "sign out everywhere", which addresses the person.
+    sign_in_id = models.UUIDField(null=True, blank=True)
+    # Deliberately no organization: a logout token names a person and a
+    # sign-in, never a tenant, and a sign-in is not an organization's.
+    created_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ecosystem_product_sign_in"
+        indexes = [
+            models.Index(fields=["user_id", "ended_at"], name="ix_psi_user_live"),
+            models.Index(fields=["sign_in_id"], name="ix_psi_sign_in"),
+        ]
+        constraints = [
+            # One row per (product, sign-in): a person who opens the same
+            # product ten times in one sign-in is told about it once.
+            models.UniqueConstraint(
+                fields=["integration", "user_id", "sign_in_id"],
+                condition=models.Q(ended_at__isnull=True),
+                name="uq_psi_live_per_sign_in",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"sign-in {self.sign_in_id} -> {self.integration_id}"
+
+
+class BackchannelLogoutStatus(StrEnum):
+    #: Waiting for (another) delivery attempt.
+    PENDING = "pending"
+    #: The product answered 200: its sessions for that sign-in are gone.
+    DELIVERED = "delivered"
+    #: The product refused the token (4xx), or its address is not one the
+    #: egress policy will call. Retrying would not change the answer.
+    FAILED = "failed"
+    #: Every attempt failed transiently; given up, and visible to operators.
+    DEAD = "dead"
+
+
+class BackchannelLogout(models.Model):
+    """One logout token owed to one product: a delivery, retried until done.
+
+    The token itself is **not** stored. It is minted at each attempt, with a
+    fresh ``iat``/``exp``/``jti``, because a logout token is a short-lived
+    signed assertion (Back-Channel Logout 1.0 section 2.4) and a retry an hour
+    later must not carry an hour-old one. What is stored is what the token
+    will say: who, which sign-in, and to which client.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    integration = models.ForeignKey(
+        ProductIntegration, on_delete=models.CASCADE, related_name="backchannel_logouts"
+    )
+    user_id = models.UUIDField()
+    #: The ``sid`` to name. ``None`` means "every session of this person"
+    #: (the token then carries ``sub`` only).
+    sign_in_id = models.UUIDField(null=True, blank=True)
+    #: ``contracts.ports.sign_ins.REASONS`` - for operators, never sent.
+    reason = models.CharField(max_length=32)
+    status = models.CharField(
+        max_length=16,
+        choices=[(s.value, s.name.title()) for s in BackchannelLogoutStatus],
+        default=BackchannelLogoutStatus.PENDING.value,
+    )
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    #: Short, bounded categories (``http_503``, ``timeout``...). Never a body.
+    last_outcome = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ecosystem_backchannel_logout"
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="ix_bcl_due"),
+            models.Index(fields=["user_id", "created_at"], name="ix_bcl_user"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"logout for {self.integration_id} ({self.status})"

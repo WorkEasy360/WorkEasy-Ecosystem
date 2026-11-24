@@ -136,6 +136,34 @@ def integration_status_view(
     )
 
 
+@staff_view(["GET"])
+def integration_backchannel_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """Back-channel logout for one product (ADR-069): whether it is on, and
+    how the last day's deliveries went - delivered, pending, refused, dead -
+    with the last problem category. Never a token, never a response body."""
+    with acting_scope(ctx):
+        found = ecosystem_selectors.integration_for_product(
+            ctx, product_code=product_code
+        )
+        if found is None:
+            raise ManifestRejected(
+                "That product has no registered integration.", field="product_code"
+            )
+        summary = ecosystem_selectors.backchannel_delivery_summary(
+            ctx, client_id=found.client_id
+        )
+    return JsonResponse(
+        {
+            "backchannel_logout_uri": (found.manifest or {}).get(
+                "backchannel_logout_uri", ""
+            ),
+            **summary,
+        }
+    )
+
+
 @staff_view(["POST"])
 def integration_health_check_view(
     request: HttpRequest, ctx: TenantContext, product_code: str

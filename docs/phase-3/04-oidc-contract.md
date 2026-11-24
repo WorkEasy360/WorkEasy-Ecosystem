@@ -119,8 +119,36 @@ platform asks "Sign out of Workeasy360 too?", signs the person out on
 confirmation, and returns the browser to `post_logout_redirect_uri`, which must
 be registered for your client **exactly** (`post_logout_redirect_uris` in the
 manifest), with `state` appended. Anything unregistered is refused, never
-followed. Other products' sessions are not ended: there is no front- or
-back-channel logout.
+followed.
+
+### 3.3 Back-channel logout (ADR-069)
+
+A product that registers `backchannel_logout_uri` (manifest `2026-11-15`) is
+told when a Workeasy360 sign-in it was opened from ends - sign-out, an
+account switch, a revoked session, "sign out everywhere", a password change
+or a password reset - by an OpenID Connect Back-Channel Logout 1.0 POST:
+
+```
+POST <your backchannel_logout_uri>
+Content-Type: application/x-www-form-urlencoded
+
+logout_token=eyJ...
+```
+
+The logout token is signed like an ID token (same key set) with JOSE header
+`typ: logout+jwt`, and carries `iss`, `aud` (your client id), `iat`, `exp`
+(120 s), `jti`, `typ: logout_token`, `events` with the back-channel-logout
+event, `sub`, and `sid` when one sign-in ended (absent: end **every** session
+of that person). It never carries `nonce`. Verify it exactly as an ID token
+(section 2), then end the sessions it names and answer `200`. Answer `400` to
+a token that does not verify; anything else is retried for about 31 hours.
+Delivery is at least once: accept each `jti` once and treat ending an ended
+session as success.
+
+Your ID tokens then carry `sid` (the Workeasy360 sign-in id) so you can map a
+logout token to the sessions it opened. Products that do not register the URI
+get neither, and their tokens are unchanged. The `workeasy360-sso` Django
+connector implements the receiver.
 
 ## 4. Token
 

@@ -56,6 +56,16 @@ logger = get_logger(__name__)
 #: assertions, which grants whatever the identity grants. One claim closes it.
 TYPE_ID_TOKEN = "id_token"  # noqa: S105 - a claim value, not a credential
 TYPE_ACCESS_TOKEN = "access_token"  # noqa: S105 - a claim value, not a credential
+#: OpenID Connect Back-Channel Logout 1.0 (ADR-069). Carried in the ``typ``
+#: claim like the other two, *and* as the JOSE header ``typ`` the spec names
+#: (``logout+jwt``), so neither an ID token nor an access token can ever be
+#: accepted as a logout instruction, nor a logout token as an identity.
+TYPE_LOGOUT_TOKEN = "logout_token"  # noqa: S105 - a claim value, not a credential
+LOGOUT_TOKEN_JOSE_TYPE = "logout+jwt"  # noqa: S105 - a JOSE header value
+BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
+#: Long enough for one delivery, short enough that a captured token is
+#: useless almost at once. Minted fresh for every attempt.
+LOGOUT_TOKEN_TTL_S = 120
 
 #: Claims every issued token carries, asserted by a test so the documented
 #: contract in docs/phase-3/05-token-claims.md cannot drift from the code.
@@ -97,6 +107,10 @@ class TokenSubject:
     #: lets a product that asked for a fresh sign-in (``prompt=login``) check
     #: that it got one, instead of trusting the round trip (ADR-044).
     auth_time: int | None = None
+    #: The Workeasy360 sign-in that authorized, as the OIDC ``sid`` claim -
+    #: set only for an integration that takes back-channel logout (ADR-069),
+    #: so every other product's ID token is unchanged.
+    sid: str = ""
 
 
 #: ADR-067: the configured issuer chosen for the request being served, set by
@@ -198,10 +212,58 @@ def issue_id_token(
     if subject.auth_time is not None:
         claims["auth_time"] = subject.auth_time
 
+    if subject.sid:
+        # Back-Channel Logout 1.0 section 2.1: the session the logout token
+        # will later name, so the product can end exactly the sessions this
+        # sign-in opened.
+        claims["sid"] = subject.sid
+
     if profile:
         claims.update(profile)
 
     return _sign(claims, ttl=ttl)
+
+
+def logout_token_issuer(as_issuer: str = "") -> str:
+    """The ``iss`` of a logout token: ``as_issuer`` - the issuer the product
+    last redeemed a code under - while it is still one of :func:`issuers`,
+    otherwise the canonical issuer (ADR-067 with ADR-069).
+
+    A logout token is minted by a worker, where no request chose an issuer, so
+    :func:`issuer` would always be the canonical one; during the move a product
+    still configured with the other name would refuse it and keep its session.
+    Never a name outside the closed list: one that has been retired is
+    replaced by the canonical issuer, exactly as discovery would answer.
+    """
+    chosen = (as_issuer or "").rstrip("/")
+    return chosen if chosen and chosen in issuers() else canonical_issuer()
+
+
+def issue_logout_token(
+    *, client_id: str, user_id: UUID, sid: str = "", as_issuer: str = ""
+) -> IssuedToken:
+    """A Back-Channel Logout 1.0 logout token for one product (ADR-069).
+
+    ``sub`` always (the person), ``sid`` when one sign-in ended rather than all
+    of them. ``events`` names the back-channel-logout event; there is no
+    ``nonce`` (section 2.4: its absence is what keeps an ID token from being
+    replayed as a logout token). Signed by the active key, like every token.
+    ``iss`` is :func:`logout_token_issuer` of ``as_issuer``.
+    """
+    now = int(time.time())
+    claims: dict[str, Any] = {
+        "iss": logout_token_issuer(as_issuer),
+        "sub": str(user_id),
+        "aud": client_id,
+        "iat": now,
+        "exp": now + LOGOUT_TOKEN_TTL_S,
+        "jti": uuid.uuid4().hex,
+        "typ": TYPE_LOGOUT_TOKEN,
+        "events": {BACKCHANNEL_LOGOUT_EVENT: {}},
+    }
+    if sid:
+        claims["sid"] = sid
+    return _sign(claims, ttl=LOGOUT_TOKEN_TTL_S, jose_type=LOGOUT_TOKEN_JOSE_TYPE)
 
 
 def issue_access_token(subject: TokenSubject) -> IssuedToken:
@@ -314,17 +376,21 @@ def _base_claims(subject: TokenSubject, *, ttl: int, token_type: str) -> dict[st
     }
 
 
-def _sign(claims: dict[str, Any], *, ttl: int) -> IssuedToken:
+def _sign(claims: dict[str, Any], *, ttl: int, jose_type: str = "") -> IssuedToken:
     key = keys.active_signing_key()
     private_pem = keys.private_key_pem(key)
 
+    # ``kid`` is the only header an ID or access token carries. Products select
+    # the verifying key by it, which is what lets a key rotate without a
+    # product redeploying. A logout token adds the ``typ`` the spec names.
+    headers = {"kid": key.kid}
+    if jose_type:
+        headers["typ"] = jose_type
     token = jwt.encode(
         claims,
         private_pem,
         algorithm=key.algorithm,
-        # The only header addition. Products select the verifying key by it,
-        # which is what lets a key rotate without a product redeploying.
-        headers={"kid": key.kid},
+        headers=headers,
     )
     # The token itself is never logged - it is a bearer credential. The jti
     # is, because correlating "this token was issued" with "this token was

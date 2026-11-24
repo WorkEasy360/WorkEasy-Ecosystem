@@ -153,6 +153,14 @@ def set_temporary_password(user: Any, password: str) -> None:
             "updated_at",
         ]
     )
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_PASSWORD_CHANGED,
+        notify_sign_ins_ended,
+    )
+
+    notify_sign_ins_ended(
+        user_id=user.pk, everywhere=True, reason=REASON_PASSWORD_CHANGED
+    )
 
 
 def reset_credentials(user: Any, password: str, *, at: datetime | None = None) -> None:
@@ -178,6 +186,14 @@ def reset_credentials(user: Any, password: str, *, at: datetime | None = None) -
         ]
     )
     UserSession.objects.filter(user_id=user.pk).delete()
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_ACCOUNT_RECOVERED,
+        notify_sign_ins_ended,
+    )
+
+    notify_sign_ins_ended(
+        user_id=user.pk, everywhere=True, reason=REASON_ACCOUNT_RECOVERED
+    )
 
 
 def clear_lockouts(user: Any) -> None:

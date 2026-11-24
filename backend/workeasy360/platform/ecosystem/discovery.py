@@ -137,6 +137,8 @@ def document() -> dict[str, Any]:
             "typ",
             "nonce",
             "auth_time",
+            # Only for integrations that take back-channel logout (ADR-069).
+            "sid",
             # The two ecosystem claims. Documented in full, with their
             # meaning and stability guarantee, in
             # docs/phase-3/05-token-claims.md.
@@ -148,6 +150,11 @@ def document() -> dict[str, Any]:
             "name",
             "organization_name",
         ],
+        # ADR-069: OpenID Connect Back-Channel Logout 1.0, for integrations
+        # that register a backchannel_logout_uri (manifest 2026-11-15). Their
+        # ID tokens carry ``sid``; their logout tokens name it.
+        "backchannel_logout_supported": True,
+        "backchannel_logout_session_supported": True,
         "request_parameter_supported": False,
         "request_uri_parameter_supported": False,
         "claims_parameter_supported": False,

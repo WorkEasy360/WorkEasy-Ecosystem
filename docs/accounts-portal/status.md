@@ -286,6 +286,6 @@ What the new tests prove:
 7. **Global logout is unchanged and partial:**
    - A product sign-out can end the central session.
    - A portal sign-out ends only that portal's session (ADR-059).
-   - There is no back-channel logout to products.
+   - There is no back-channel logout to products on this branch. ADR-069 (PR #4, unmerged) adds it, and signs each logout token as the issuer the product is configured with during the move (ADR-069 addendum).
    - Nothing here made it worse.
 8. **Not done, by scope:** moving the customer login and account pages to `accounts.` (owner chose against it); renaming internal identifiers (`auth` role, cookies, tables), which brings no safety and needs a migration.

@@ -54,6 +54,15 @@ from workeasy360.contracts.values.identifiers import ProductCode
 #: preference chooses between the doors these declare and can open no other.
 MANIFEST_VERSION: Final = "2026-10-12"
 
+#: ``2026-11-15`` (back-channel logout, ADR-069) adds one optional field,
+#: ``backchannel_logout_uri``: where the platform POSTs an OpenID Connect
+#: Back-Channel Logout 1.0 logout token when a person's Workeasy360 sign-in
+#: ends, so "sign out" and "sign out everywhere" reach the product's own
+#: sessions instead of waiting for its entitlement re-check. A superset of
+#: ``2026-10-12``; a product opts in by submitting it. ``MANIFEST_VERSION``
+#: stays the default so nothing registered today changes meaning.
+BACKCHANNEL_MANIFEST_VERSION: Final = "2026-11-15"
+
 #: ``2026-10-01`` (Phase 6) added one optional field, ``events``: the event
 #: types the product publishes into the ecosystem. It is the contract that
 #: makes a product's events routable at all - an event type not declared
@@ -69,16 +78,28 @@ LEGACY_MANIFEST_VERSION: Final = "2026-09-01"
 #: that accepting two during a migration window - which is now - did not
 #: require changing the type of this constant.
 SUPPORTED_MANIFEST_VERSIONS: Final[frozenset[str]] = frozenset(
-    {LEGACY_MANIFEST_VERSION, EVENTS_MANIFEST_VERSION, MANIFEST_VERSION}
+    {
+        LEGACY_MANIFEST_VERSION,
+        EVENTS_MANIFEST_VERSION,
+        MANIFEST_VERSION,
+        BACKCHANNEL_MANIFEST_VERSION,
+    }
 )
 
 #: Versions whose shape includes ``events``.
 _VERSIONS_WITH_EVENTS: Final[frozenset[str]] = frozenset(
-    {EVENTS_MANIFEST_VERSION, MANIFEST_VERSION}
+    {EVENTS_MANIFEST_VERSION, MANIFEST_VERSION, BACKCHANNEL_MANIFEST_VERSION}
 )
 
 #: Versions whose shape includes ``sign_in_mode`` and ``login_url``.
-_VERSIONS_WITH_SIGN_IN: Final[frozenset[str]] = frozenset({MANIFEST_VERSION})
+_VERSIONS_WITH_SIGN_IN: Final[frozenset[str]] = frozenset(
+    {MANIFEST_VERSION, BACKCHANNEL_MANIFEST_VERSION}
+)
+
+#: Versions whose shape includes ``backchannel_logout_uri``.
+_VERSIONS_WITH_BACKCHANNEL: Final[frozenset[str]] = frozenset(
+    {BACKCHANNEL_MANIFEST_VERSION}
+)
 
 #: How a manifest that predates ``sign_in_mode`` reads: a registration has
 #: redirect URIs by construction, so it is an OIDC client - with no sign-in
@@ -133,6 +154,7 @@ _MANIFEST_FIELDS: Final[frozenset[str]] = frozenset(
         "events",
         "sign_in_mode",
         "login_url",
+        "backchannel_logout_uri",
     }
 )
 
@@ -234,6 +256,13 @@ class ProductManifest:
     #: The product's own sign-in page, where it has one. Where Workeasy360
     #: sends a person who prefers the product's sign-in - never anywhere else.
     login_url: str = ""
+    #: Where the platform delivers back-channel logout tokens (manifest
+    #: ``2026-11-15``, ADR-069), or ``""`` when the product takes none.
+    backchannel_logout_uri: str = ""
+
+    @property
+    def takes_backchannel_logout(self) -> bool:
+        return bool(self.backchannel_logout_uri)
 
     def as_dict(self) -> dict[str, Any]:
         """The round-trip form. What the registration API echoes back.
@@ -261,6 +290,11 @@ class ProductManifest:
             body["sign_in_mode"] = self.sign_in_mode.value
             if self.login_url:
                 body["login_url"] = self.login_url
+        if (
+            self.manifest_version in _VERSIONS_WITH_BACKCHANNEL
+            and self.backchannel_logout_uri
+        ):
+            body["backchannel_logout_uri"] = self.backchannel_logout_uri
         return body
 
     @property
@@ -345,6 +379,7 @@ def from_stored_manifest(payload: dict[str, Any]) -> ProductManifest:
             str(payload.get("sign_in_mode") or DEFAULT_SIGN_IN_MODE.value)
         ),
         login_url=str(payload.get("login_url", "")),
+        backchannel_logout_uri=str(payload.get("backchannel_logout_uri", "")),
     )
 
 
@@ -464,6 +499,13 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
     sign_in_mode, login_url = _validate_sign_in(
         payload, version=version, allow_insecure=allow_insecure_urls
     )
+    backchannel_logout_uri = _validate_backchannel_logout(
+        payload,
+        version=version,
+        redirect_uris=redirect_uris,
+        sign_in_mode=sign_in_mode,
+        allow_insecure=allow_insecure_urls,
+    )
 
     return ProductManifest(
         manifest_version=version,
@@ -480,6 +522,7 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
         events=events,
         sign_in_mode=sign_in_mode,
         login_url=login_url,
+        backchannel_logout_uri=backchannel_logout_uri,
     )
 
 
@@ -543,6 +586,68 @@ def _validate_sign_in(
             field="login_url",
         )
     return mode, login_url
+
+
+def _validate_backchannel_logout(
+    payload: dict[str, Any],
+    *,
+    version: str,
+    redirect_uris: tuple[str, ...],
+    sign_in_mode: ProductSignInMode,
+    allow_insecure: bool,
+) -> str:
+    """``backchannel_logout_uri`` (manifest ``2026-11-15``, ADR-069).
+
+    The one URL in a manifest that the *platform's server* - not a browser -
+    sends something to, so it passes the redirect-URI gate (https, no query,
+    no fragment, no wildcard, no credentials, no internal or metadata host)
+    **and** must share its origin with a registered redirect URI. A product
+    can therefore only ask for logout tokens to be delivered to the host it
+    already receives authorization codes on; it cannot point the platform's
+    outbound delivery at a third party. Delivery itself still goes through the
+    SSRF-guarded egress client, which re-checks every resolved address.
+    """
+    raw = payload.get("backchannel_logout_uri")
+    if raw in (None, ""):
+        return ""
+    if version not in _VERSIONS_WITH_BACKCHANNEL:
+        raise ManifestError(
+            f"Manifest field 'backchannel_logout_uri' requires manifest_version "
+            f"{BACKCHANNEL_MANIFEST_VERSION!r}; {version!r} predates it.",
+            field="backchannel_logout_uri",
+        )
+    if sign_in_mode is ProductSignInMode.LOCAL_ONLY:
+        raise ManifestError(
+            "A local_only product does not use Workeasy360 sign-in, so there is "
+            "no Workeasy360 session to log it out of.",
+            field="backchannel_logout_uri",
+        )
+    uri = _validate_url(
+        _as_str(raw, "backchannel_logout_uri"),
+        field="backchannel_logout_uri",
+        allow_insecure=allow_insecure,
+        is_redirect=True,
+    )
+    origins = {_origin(r) for r in redirect_uris}
+    if _origin(uri) not in origins:
+        raise ManifestError(
+            "backchannel_logout_uri must be on the same origin (scheme, host and "
+            "port) as one of the registered redirect_uris.",
+            field="backchannel_logout_uri",
+        )
+    return uri
+
+
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    """(scheme, host, port) with the scheme's default port made explicit, so
+    ``https://a.example:443/x`` and ``https://a.example/y`` are one origin, as
+    RFC 6454 and every browser say."""
+    parts = urlsplit(url)
+    port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+    return (parts.scheme, (parts.hostname or "").lower(), port)
 
 
 def _as_str(value: Any, field: str) -> str:

@@ -100,12 +100,22 @@ def test_only_the_delivery_pipeline_can_send():
     renders. It carries every egress guarantee already; it is a sender, not
     a delivery pipeline, because a health check has no retry/backoff
     workflow to hand off - the result is either recorded now or the next
-    sweep tries again."""
+    sweep tries again.
+
+    ADR-069 adds ``integration/backchannel/delivery.py``: an OpenID Connect
+    Back-Channel Logout POST to a *registered* product's
+    ``backchannel_logout_uri`` - which the manifest requires to share its
+    origin with one of that product's redirect URIs - carrying a logout token
+    minted for that product alone. It is a delivery pipeline in its own right:
+    rows leased with SKIP LOCKED, its own retry schedule and terminal states
+    (``platform.ecosystem.backchannel``), and nothing it sends is customer- or
+    request-supplied."""
     allowed = {
         "integration/webhooks/pipeline.py",
         "intelligence/ai/transport.py",
         "commercial/payments/transport.py",
         "integration/health/probe.py",
+        "integration/backchannel/delivery.py",
     }
     offenders = []
     for rel, path in _runtime_sources():
