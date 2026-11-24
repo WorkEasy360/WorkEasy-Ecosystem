@@ -275,7 +275,8 @@ def _switched_login(portal: str) -> str:
 
     if portal not in portals.ACCOUNT_PORTALS:
         portal = portals.APP
-    return f"{portal_links.account_url(portal)}/login?switched=1"
+    # ADR-071: the next sign-in is on WorkEasy360 Accounts when it hosts it.
+    return f"{portal_links.identity_url(portal)}/login?switched=1"
 
 
 @require_http_methods(["POST"])

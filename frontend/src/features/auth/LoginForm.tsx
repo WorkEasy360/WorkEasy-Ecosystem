@@ -153,7 +153,7 @@ export function LoginForm({
       <p className="w360-hint">
         <Link href="/forgot-password">Forgotten your password?</Link>
         {/* ADR-059: only a customer creates their own account here. A partner
-            applies (the link under this form) or is set up by Workeasy360, and
+            applies (the link under this form) or is set up by WorkEasy360, and
             administrators are staff. */}
         {(mode === "user" || mode === null) && (
           <>

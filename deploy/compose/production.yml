@@ -257,6 +257,8 @@ services:
       W360_AUTH_ORIGIN: ${W360_AUTH_ORIGIN:?W360_AUTH_ORIGIN is required}
       # ADR-065: the Digital Store's own host - empty keeps the Store on app.
       W360_STORE_ORIGIN: ${W360_STORE_ORIGIN:-}
+      # ADR-071: WorkEasy360 Accounts hosts the customer portal's identity pages (on|off; the api reads the same value).
+      W360_ACCOUNTS_IDENTITY: ${W360_ACCOUNTS_IDENTITY:-off}
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]

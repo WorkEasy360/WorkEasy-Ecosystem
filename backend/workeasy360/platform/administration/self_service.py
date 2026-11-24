@@ -85,7 +85,8 @@ def _describe(ttl: timedelta) -> str:
 
 
 def _url(path: str, token: str | None = None, *, portal: str | None = None) -> str:
-    base = f"{portal_links.account_url(portal)}{path}"
+    # ADR-071: identity pages - on WorkEasy360 Accounts when it hosts them.
+    base = f"{portal_links.identity_url(portal)}{path}"
     return f"{base}#token={token}" if token else base
 
 

@@ -68,6 +68,49 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
  */
 export function MySecurityScreen() {
   const { slug, can } = useOrgAccess();
+  return (
+    <Page>
+      <PageHeader
+        title="Account & Security"
+        lead="Your sign-in email and password, where you're signed in, and recent activity. These belong to your account, in every organization."
+        actions={
+          slug ? (
+            <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/sign-in-preferences`}>
+              Sign-in preferences
+            </Link>
+          ) : undefined
+        }
+      />
+      <AccountSecurityPanels preferencesHref={slug ? `/o/${slug}/settings/sign-in-preferences` : undefined} />
+
+      {(can("platform.audit.view") || can("platform.security.view")) && slug && (
+        <Panel title="Organization security">
+          <p className={local.muted}>Visible to you as an administrator of this organization.</p>
+          <div className={local.actions}>
+            {can("platform.audit.view") && (
+              <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/audit`}>
+                Admin activity history
+              </Link>
+            )}
+            {can("platform.security.view") && (
+              <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/security/authentication`}>
+                Organization sign-in policy
+              </Link>
+            )}
+          </div>
+        </Panel>
+      )}
+    </Page>
+  );
+}
+
+/**
+ * The person's own security, in every organization: sign-in email, password, sign-in
+ * methods, where they are signed in, sign out everywhere, recent activity. Account &
+ * Security on the customer portal and the account page on WorkEasy360 Accounts
+ * (ADR-071) both show it; neither needs an organization for it.
+ */
+export function AccountSecurityPanels({ preferencesHref }: { preferencesHref?: string }) {
   const confirm = useConfirm();
   const [sessions, reloadSessions] = useLoad(() => accountApi.sessions(), []);
   const [activity, reloadActivity] = useLoad(() => accountApi.activity(), []);
@@ -97,18 +140,7 @@ export function MySecurityScreen() {
   const email = session.status === "ready" ? session.session.email : "";
 
   return (
-    <Page>
-      <PageHeader
-        title="Account & Security"
-        lead="Your sign-in email and password, where you're signed in, and recent activity. These belong to your account, in every organization."
-        actions={
-          slug ? (
-            <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/sign-in-preferences`}>
-              Sign-in preferences
-            </Link>
-          ) : undefined
-        }
-      />
+    <>
       {confirm.dialog}
 
       <Panel title="Sign-in email">
@@ -127,7 +159,7 @@ export function MySecurityScreen() {
           <li>
             <strong>Products</strong> - open with this account through WorkEasy360 single sign-on. The first time you open each product
             after signing in, you choose to continue with this account or use a different one.{" "}
-            {slug && <Link href={`/o/${slug}/settings/sign-in-preferences`}>Change how products sign you in</Link>}
+            {preferencesHref && <Link href={preferencesHref}>Change how products sign you in</Link>}
           </li>
         </ul>
       </Panel>
@@ -220,24 +252,7 @@ export function MySecurityScreen() {
         </LoadGate>
       </Panel>
 
-      {(can("platform.audit.view") || can("platform.security.view")) && slug && (
-        <Panel title="Organization security">
-          <p className={local.muted}>Visible to you as an administrator of this organization.</p>
-          <div className={local.actions}>
-            {can("platform.audit.view") && (
-              <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/audit`}>
-                Admin activity history
-              </Link>
-            )}
-            {can("platform.security.view") && (
-              <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/security/authentication`}>
-                Organization sign-in policy
-              </Link>
-            )}
-          </div>
-        </Panel>
-      )}
-    </Page>
+    </>
   );
 }
 

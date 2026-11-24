@@ -176,7 +176,7 @@ def test_signup_for_a_registered_address_answers_the_same_and_changes_nothing(
     existing.refresh_from_db()
     assert existing.check_password(PASSWORD) and existing.status == "active"
     subjects = [m.subject for m in deliver_account_mail()]
-    assert "You already have a Workeasy360 account" in subjects
+    assert "You already have a WorkEasy360 account" in subjects
     # The "existing" email carries no token of any kind.
     notice = next(m for m in mail.outbox if m.to == ["taken@example.com"])
     assert "#token=" not in notice.body

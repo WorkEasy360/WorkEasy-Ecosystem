@@ -11,10 +11,10 @@ import styles from "./ProductAccess.module.css";
 type Load = { status: "loading" } | { status: "invalid" } | { status: "ready"; request: SignOutRequest };
 
 /**
- * A product's "sign out of Workeasy360 too" (RP-initiated logout, ADR-044).
+ * A product's "sign out of WorkEasy360 too" (RP-initiated logout, ADR-044).
  *
  * Opening this page signs no one out: a link alone must never end a session
- * (logout CSRF). The person confirms, and only then is the Workeasy360
+ * (logout CSRF). The person confirms, and only then is the WorkEasy360
  * sign-in ended - every portal session of it. Either way the browser returns
  * to the product's registered sign-out page, which the server names.
  */
@@ -66,17 +66,17 @@ export function SignOutConfirm() {
         <AccountsBrand />
         <section className={`w360-card ${styles.card}`} aria-labelledby={headingId}>
           <h1 id={headingId} className={styles.title}>
-            {request.signed_in ? "Sign out of Workeasy360 too?" : "You're signed out of Workeasy360"}
+            {request.signed_in ? "Sign out of WorkEasy360 too?" : "You're signed out of WorkEasy360"}
           </h1>
           <p className={styles.lead}>
             {request.signed_in
-              ? `You signed out of ${product}. Workeasy360 is still signed in on this device, so opening a product would sign you straight back in.`
-              : `You signed out of ${product}, and Workeasy360 is not signed in on this device.`}
+              ? `You signed out of ${product}. WorkEasy360 is still signed in on this device, so opening a product would sign you straight back in.`
+              : `You signed out of ${product}, and WorkEasy360 is not signed in on this device.`}
           </p>
           {request.signed_in && request.account && (
             <dl className={styles.identity}>
               <div>
-                <dt>Signed in to Workeasy360 as</dt>
+                <dt>Signed in to WorkEasy360 as</dt>
                 <dd>{request.account.email}</dd>
               </div>
             </dl>
@@ -85,13 +85,13 @@ export function SignOutConfirm() {
             {request.signed_in ? (
               <>
                 <button type="button" className={`${styles.choice} ${styles.primary}`} disabled={busy} onClick={() => void answer(true)}>
-                  <span className={styles.choiceLabel}>Sign out of Workeasy360</span>
+                  <span className={styles.choiceLabel}>Sign out of WorkEasy360</span>
                   <span className={styles.choiceHint}>
-                    Ends your Workeasy360 session on this device. Other products stay signed in until you sign out of them.
+                    Ends your WorkEasy360 session on this device. Other products stay signed in until you sign out of them.
                   </span>
                 </button>
                 <button type="button" className={styles.choice} disabled={busy} onClick={() => void answer(false)}>
-                  <span className={styles.choiceLabel}>Stay signed in to Workeasy360</span>
+                  <span className={styles.choiceLabel}>Stay signed in to WorkEasy360</span>
                   <span className={styles.choiceHint}>Return to {product}.</span>
                 </button>
               </>

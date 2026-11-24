@@ -78,7 +78,7 @@ export function AuthFrame({ title, children }: { title: string; children: React.
     <main id="w360-main" className={styles.authPage}>
       <div className={styles.authColumn}>
         <div className={styles.authHeading}>
-          <Link href="/" className={styles.logo} aria-label="Workeasy360 home">
+          <Link href="/" className={styles.logo} aria-label="WorkEasy360 home">
             <Logo size="lg" />
           </Link>
           <h1 className={styles.authTitle}>{title}</h1>
@@ -457,7 +457,7 @@ export function ResetPasswordScreen({
   if (token === "") {
     return (
       <Frame title={title}>
-        <p role="alert">{invitation ? "This invitation link is not valid. Ask the Workeasy360 team to send a new one." : "This link is not valid. Ask for a new one."}</p>
+        <p role="alert">{invitation ? "This invitation link is not valid. Ask the WorkEasy360 team to send a new one." : "This link is not valid. Ask for a new one."}</p>
         <p className={styles.below}>
           <Link href={forgot}>Reset your password</Link>
         </p>
@@ -467,7 +467,7 @@ export function ResetPasswordScreen({
 
   return (
     <Frame title={title}>
-      {invitation && <p className={styles.below}>Choose the password you will use to sign in to the Workeasy360 partner portal.</p>}
+      {invitation && <p className={styles.below}>Choose the password you will use to sign in to the WorkEasy360 partner portal.</p>}
       <form method="post"
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
@@ -486,7 +486,7 @@ export function ResetPasswordScreen({
                 err instanceof ApiError && err.code === "link_invalid"
                   ? [
                       invitation
-                        ? "This invitation link is not valid or has expired. Ask the Workeasy360 team to send a new one."
+                        ? "This invitation link is not valid or has expired. Ask the WorkEasy360 team to send a new one."
                         : "This link is not valid or has expired. Ask for a new one.",
                     ]
                   : problemsOf(err),
