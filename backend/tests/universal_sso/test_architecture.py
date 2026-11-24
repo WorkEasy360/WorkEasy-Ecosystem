@@ -139,6 +139,10 @@ def test_passwords_never_cross_the_product_boundary_from_the_frontend():
         "/api/v1/auth/password",
         # ADR-066: the current password confirms a change of sign-in email.
         "/api/v1/auth/email",
+        # ADR-075: the password confirms setting up, renewing and turning off
+        # the person's own two-step verification, and closing the account.
+        "/api/v1/auth/two-step/",
+        "/api/v1/auth/account/closure",
         "/api/v1/public/signup",
         "/api/v1/public/password/reset",
         "/api/v1/public/invitations/accept",

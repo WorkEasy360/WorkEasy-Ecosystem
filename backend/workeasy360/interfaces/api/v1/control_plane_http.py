@@ -302,6 +302,47 @@ def limited(
     return None
 
 
+def _user_budget(bucket: str, user: Any) -> tuple[str, int, int] | None:
+    limit, window = getattr(settings, "CONTROL_PLANE_RATE_LIMITS", {}).get(
+        f"{bucket}_user", (0, 60)
+    )
+    limit, window = int(limit), max(1, int(window))
+    if limit <= 0 or user is None:
+        return None
+    key = f"{_KEY_PREFIX}{bucket}_user:{user.id}:{throttle.window_slot(window)}"
+    return key, limit, window
+
+
+def failures_exhausted(bucket: str, *, user: Any) -> JsonResponse | None:
+    """A per-person budget spent only by **failed** attempts (ADR-075 review
+    L-2): a 429 once ``bucket``'s failures reach its limit in this window,
+    else ``None``. Checking adds nothing; ``spend_failure`` does, after a
+    failure. A day's budget for wrong codes must never lock out a person who
+    simply signs in often with the right one."""
+    budget = _user_budget(bucket, user)
+    if budget is None:
+        return None
+    key, limit, window = budget
+    if throttle.count(key) < limit:
+        return None
+    metrics.increment("control_plane_throttled_total", bucket=f"{bucket}_user")
+    logger.warning("control_plane.throttled", bucket=f"{bucket}_user", limit=limit)
+    response = JsonResponse(
+        {"code": "rate_limited", "detail": "Too many requests. Try again shortly."},
+        status=429,
+    )
+    response["Retry-After"] = str(throttle.retry_after(window))
+    return response
+
+
+def spend_failure(bucket: str, *, user: Any) -> None:
+    """Count one failed attempt against ``failures_exhausted``'s budget."""
+    budget = _user_budget(bucket, user)
+    if budget is not None:
+        key, _limit, window = budget
+        throttle.hit(key, window)
+
+
 def page_response(page: Any) -> JsonResponse:
     """Any keyset page (``items``, ``next_cursor``, ``has_more``) as the wire shape."""
     return JsonResponse(

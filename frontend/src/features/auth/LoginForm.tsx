@@ -7,6 +7,7 @@ import { login, type LoginErrorCode } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import { publicApi } from "@/lib/api/public";
 import { destinationAfterSignIn, type SignInMode } from "./signInMode";
+import { TwoStepSignIn, twoStepChallenge } from "./TwoStepSignIn";
 
 const ERROR_COPY: Record<LoginErrorCode | "unknown", string> = {
   invalid_credentials: "That email or password isn't right.",
@@ -52,6 +53,32 @@ export function LoginForm({
   const [unverified, setUnverified] = useState(false);
   const [resent, setResent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Accounts V3: the password was right and the account has two-step on.
+  const [challenge, setChallenge] = useState<string | null>(null);
+
+  /** What a successful sign-in does - after the password, or after its code. */
+  function proceed() {
+    if (resume) {
+      // A full top-level navigation, not client-side routing: this must
+      // reach the Django resume endpoint with the session cookie the
+      // login above just set, and the browser must follow whatever it
+      // redirects to next - the platform's org chooser or the product
+      // itself (Task 31/32).
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
+      return;
+    }
+    if (onSignedIn) {
+      onSignedIn();
+      return;
+    }
+    // Administrator: the Admin Console (or the console page that sent them
+    // here), which asks the server whether they may enter. User: the
+    // central dashboard, which picks the organization and never sends them
+    // to the console. No mode (an old link): the dashboard decides, as in
+    // Phase 9.
+    router.replace(destinationAfterSignIn(mode, searchParams.get("next")));
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,32 +88,32 @@ export function LoginForm({
     setSubmitting(true);
     try {
       await login(email, password);
-      if (resume) {
-        // A full top-level navigation, not client-side routing: this must
-        // reach the Django resume endpoint with the session cookie the
-        // login above just set, and the browser must follow whatever it
-        // redirects to next - the platform's org chooser or the product
-        // itself (Task 31/32).
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
-        return;
-      }
-      if (onSignedIn) {
-        onSignedIn();
-        return;
-      }
-      // Administrator: the Admin Console (or the console page that sent them
-      // here), which asks the server whether they may enter. User: the
-      // central dashboard, which picks the organization and never sends them
-      // to the console. No mode (an old link): the dashboard decides, as in
-      // Phase 9.
-      router.replace(destinationAfterSignIn(mode, searchParams.get("next")));
+      proceed();
     } catch (err) {
+      const next = twoStepChallenge(err);
+      if (next) {
+        setPassword("");
+        setChallenge(next);
+        return;
+      }
       setError(loginErrorMessage(err));
       setUnverified(err instanceof ApiError && err.code === "email_not_verified");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (challenge) {
+    return (
+      <TwoStepSignIn
+        challenge={challenge}
+        onSignedIn={proceed}
+        onRestart={(message) => {
+          setChallenge(null);
+          setError(message);
+        }}
+      />
+    );
   }
 
   return (

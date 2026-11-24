@@ -506,6 +506,16 @@ def request_email_change(
                 },
                 idempotency_key=f"account:{holder.pk}:change-email-in-use:{hour}",
             )
+            # ADR-075: the request is recorded exactly as a free address's is
+            # (a link nobody receives, refused anyway at confirmation while the
+            # address is taken), so "pending" reads the same either way and is
+            # no oracle for whether the address has an account.
+            tokens.issue(
+                user.pk,
+                AccountToken.Purpose.CHANGE_EMAIL,
+                ttl=_verify_ttl(),
+                new_email=typed,
+            )
             outcome = "in_use"
         else:
             token = tokens.issue(
@@ -534,6 +544,101 @@ def request_email_change(
     metrics.increment("identity_email_change_requests_total", outcome=outcome)
     logger.info("identity.email_change.requested", outcome=outcome)
     return outcome
+
+
+def pending_email_change(user_id: Any) -> dict[str, Any] | None:
+    """The change of sign-in email waiting for its link (ADR-075), or ``None``.
+    The same whether or not the new address belongs to another account."""
+    from workeasy360.platform.identity.models import AccountToken
+
+    row = (
+        AccountToken.objects.filter(
+            user_id=user_id,
+            purpose=AccountToken.Purpose.CHANGE_EMAIL,
+            used_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "new_email": row.new_email,
+        "requested_at": row.created_at.isoformat(),
+        "expires_at": row.expires_at.isoformat(),
+    }
+
+
+def resend_email_change(user_id: Any, *, portal: str | None = None) -> dict[str, Any]:
+    """Mail the pending change's link again (a new link; the earlier one stops
+    working). When the address has meanwhile been taken, its holder is told
+    instead - the same answer either way."""
+    from workeasy360.contracts.errors import NoPendingEmailChange
+    from workeasy360.platform.identity import lifecycle, tokens
+    from workeasy360.platform.identity.models import AccountToken, User
+    from workeasy360.platform.notifications.services import notify_account
+
+    pending = pending_email_change(user_id)
+    if pending is None:
+        raise NoPendingEmailChange()
+    user = User.objects.get(pk=user_id)
+    if user.status != UserStatus.ACTIVE.value:
+        raise NoPendingEmailChange()
+    typed = pending["new_email"]
+    with transaction.atomic():
+        holder = lifecycle.lock_by_email(typed)
+        token = tokens.issue(
+            user.pk, AccountToken.Purpose.CHANGE_EMAIL, ttl=_verify_ttl(), new_email=typed
+        )
+        if holder is not None:
+            hour = timezone.now().strftime("%Y%m%d%H")
+            notify_account(
+                template_key=CHANGE_EMAIL_IN_USE_TEMPLATE,
+                recipient_email=holder.email_original or holder.email,
+                context={
+                    "sign_in_url": _url("/login", portal=portal),
+                    "reset_url": _url("/forgot-password", portal=portal),
+                },
+                idempotency_key=f"account:{holder.pk}:change-email-in-use:{hour}",
+            )
+        else:
+            first_name = (user.full_name or "").split(" ", 1)[0] or "there"
+            notify_account(
+                template_key=CHANGE_EMAIL_TEMPLATE,
+                recipient_email=typed,
+                context={"name": first_name, "expires_in": _describe(_verify_ttl())},
+                sealed_context={
+                    "confirm_url": _url("/confirm-email", token, portal=portal)
+                },
+                idempotency_key=f"account:{user.pk}:change-email:{_hash_prefix(token)}",
+            )
+    metrics.increment("identity_email_change_resends_total")
+    logger.info("identity.email_change.resent", user_id=str(user_id))
+    return pending_email_change(user_id) or pending
+
+
+def cancel_email_change(
+    user_id: Any, *, ip_prefix: str = "", device_label: str = ""
+) -> None:
+    """Withdraw the pending change: its link stops working. The current
+    sign-in email was never touched."""
+    from workeasy360.contracts.errors import NoPendingEmailChange
+    from workeasy360.platform.identity import tokens
+    from workeasy360.platform.identity.account import record_account_event
+    from workeasy360.platform.identity.models import AccountEvent, AccountToken
+
+    with transaction.atomic():
+        spent = tokens.spend_open(user_id, AccountToken.Purpose.CHANGE_EMAIL)
+        if not spent:
+            raise NoPendingEmailChange()
+        record_account_event(
+            user_id,
+            AccountEvent.Kind.EMAIL_CHANGE_CANCELLED,
+            ip_prefix=ip_prefix,
+            device_label=device_label,
+        )
+    logger.info("identity.email_change.cancelled", user_id=str(user_id))
 
 
 def confirm_email_change(token: Any) -> Any:

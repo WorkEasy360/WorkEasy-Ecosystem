@@ -1443,6 +1443,8 @@ function securityRoutes(extra: Record<string, Reply[]> = {}): Record<string, Rep
   return {
     "GET /api/v1/auth/sessions": [{ status: 200, body: SESSIONS }],
     "GET /api/v1/auth/activity": [{ status: 200, body: EVENTS }],
+    // Accounts V3: the two-step verification card on the same page.
+    "GET /api/v1/auth/two-step": [{ status: 200, body: { available: true, enabled: false, method: null, enabled_at: null, recovery_codes_remaining: 0 } }],
     ...extra,
   };
 }
@@ -1847,7 +1849,8 @@ describe("accepting an invitation", () => {
     });
     const { container } = render(<AcceptInvitation />);
     expect(await screen.findByText(/An account already exists for new@acme.test/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    // Back to this invitation page after signing in (never with the link's token).
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login?next=%2Finvitations%2Faccept");
     expect(screen.queryByLabelText("Choose a password")).not.toBeInTheDocument();
     await expectNoViolations(container);
   });

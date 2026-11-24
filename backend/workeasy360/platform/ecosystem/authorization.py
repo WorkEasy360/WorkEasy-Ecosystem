@@ -738,6 +738,7 @@ def create_pending(
     awaiting_choice: bool = False,
     user_id: UUID | None = None,
     authenticated_after: Any = None,
+    refused_organization_id: UUID | None = None,
 ) -> PendingGrant:
     """Park a verified request. The browser is sent to the platform's own
     login, organization-chooser or access-chooser page next, carrying only
@@ -771,6 +772,7 @@ def create_pending(
         awaiting_choice=awaiting_choice,
         user_id=user_id,
         authenticated_after=authenticated_after,
+        refused_organization_id=refused_organization_id,
         expires_at=timezone.now() + timedelta(seconds=ttl),
     )
     return PendingGrant(token=token, expires_in=ttl)
@@ -788,6 +790,8 @@ class ParkedRequest:
     authenticated_after: Any
     #: When it was parked (its expiry less the parking lifetime).
     parked_at: Any = None
+    #: ADR-075: see ``PendingAuthorization.refused_organization_id``.
+    refused_organization_id: UUID | None = None
 
     def bound_to(self, user_id: Any) -> bool:
         """Whether ``user_id`` may act on it: anyone, for a row parked for
@@ -850,7 +854,28 @@ def find_pending(*, token: str) -> ParkedRequest | None:
         authenticated_after=row.authenticated_after,
         parked_at=row.expires_at
         - timedelta(seconds=int(settings.OIDC_PENDING_AUTHORIZATION_TTL_S)),
+        refused_organization_id=row.refused_organization_id,
     )
+
+
+def launch_with_organization(integration: Any, organization_id: UUID) -> str | None:
+    """The product's registered launch URL with ``organization=<id>`` - the
+    same address the launcher opens (``launcher.services``), from which the
+    product starts its own authorization request for that organization
+    (ADR-075). ``None`` when the product registered no launch URL."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    launch_url = str(getattr(integration.manifest_obj, "launch_url", "") or "")
+    if not launch_url:
+        return None
+    parts = urlsplit(launch_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "organization"
+    ]
+    query.append(("organization", str(organization_id)))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 
 
 def claim_pending(parked: ParkedRequest) -> bool:
@@ -1128,6 +1153,20 @@ def redeem_code(
     # code. See this module's docstring; the code is a record of a decision,
     # not a licence to skip making it again.
     _revalidate_subject(row)
+
+    # ADR-075: the sign-in that authorized must still be open. A code minted
+    # in the moment before "sign out of this device" or "sign out everywhere"
+    # would otherwise open a product session no logout ever covers.
+    if row.sign_in_id is not None:
+        from workeasy360.platform.identity.selectors import sign_in_is_live
+
+        if not sign_in_is_live(row.user_id, row.sign_in_id):
+            logger.warning(
+                "ecosystem.token.sign_in_ended",
+                product_code=row.integration.product_code,
+            )
+            metrics.increment("ecosystem_code_sign_in_ended_total")
+            raise failure
 
     with transaction.atomic():
         spent = AuthorizationCode.objects.filter(

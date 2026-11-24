@@ -17,16 +17,27 @@ export function centerOrigins(env: Record<string, string | undefined> = process.
   return { appOrigin: origins.app };
 }
 
-/** The Control Center's sections, in the order its navigation shows them. */
+/** The Control Center's sections, in the order its navigation shows them - exactly
+ * four (Accounts V3, the note's section 04). Organizations, subscriptions and billing
+ * are User Admin's and are linked from Settings; products' sign-ins are part of
+ * Devices & Sessions. My Profile opens first. */
 export const CENTER_SECTIONS = [
-  { key: "overview", label: "Overview", href: "/account" },
-  { key: "products", label: "My Products", href: "/account/products" },
-  { key: "connected-logins", label: "Connected Logins", href: "/account/connected-logins" },
-  { key: "sessions", label: "Active Sessions", href: "/account/sessions" },
-  { key: "history", label: "Login History", href: "/account/history" },
-  { key: "organizations", label: "Organizations", href: "/account/organizations" },
-  { key: "security", label: "Security", href: "/account/security" },
-  { key: "settings", label: "Account Settings", href: "/account/settings" },
+  { key: "profile", label: "My Profile", href: "/account" },
+  { key: "security", label: "Login & Security", href: "/account/security" },
+  { key: "sessions", label: "Devices & Sessions", href: "/account/sessions" },
+  { key: "settings", label: "Settings", href: "/account/settings" },
 ] as const;
 
 export type CenterSection = (typeof CENTER_SECTIONS)[number]["key"];
+
+/** Accounts V3: where each page of the earlier Control Center (ADR-072) lives now. */
+export const MOVED_SECTIONS: Record<string, string> = {
+  "/account/products": "/account/settings",
+  "/account/organizations": "/account/settings",
+  "/account/connected-logins": "/account/sessions",
+  "/account/history": "/account/sessions",
+  "/account/sign-in-preferences": "/account/security",
+};
+
+/** The account-security help page, signed in or not (Accounts V3, the note's 10.3). */
+export const ACCOUNT_HELP_HREF = "/help/account";

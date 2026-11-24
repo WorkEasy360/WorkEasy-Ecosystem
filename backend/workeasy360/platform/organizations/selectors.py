@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -958,3 +959,105 @@ def member_rows_in_scope() -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def sole_owned_organizations(
+    user_id: UUID, *, lock: bool = False
+) -> list[dict[str, Any]]:
+    """The organizations this person is the **only** usable owner of (ADR-075):
+    closing their account would leave each without an owner. A co-owner counts
+    only while their own account is active - a closed or disabled owner keeps
+    their membership row, but can manage nothing.
+
+    Read from the access-directory projection (control plane, no RLS), which
+    holds one row per active membership, filtered by the caller's own
+    verified id. ``lock`` (inside the closing transaction) locks every owner
+    row of those organizations first, in a fixed order, so two co-owners who
+    close at the same moment cannot both pass on the strength of the other."""
+    from workeasy360.contracts.enums import UserStatus
+    from workeasy360.platform.organizations.models import UserOrganizationAccess
+
+    closed = {OrganizationStatus.DELETED.value, OrganizationStatus.PENDING_DELETION.value}
+    owned = list(
+        UserOrganizationAccess.objects.filter(user_id=user_id, is_owner=True)
+        .exclude(organization_status__in=closed)
+        .values("organization_id", "organization_display_name", "organization_slug")
+    )
+    # ADR-075 review M-2: an owner still INVITED has no row in the projection,
+    # yet is the organization's only owner.
+    pending = pending_owned_organizations(user_id, lock=lock)
+    if not owned:
+        return pending
+    owners = UserOrganizationAccess.objects.filter(
+        organization_id__in=[row["organization_id"] for row in owned], is_owner=True
+    )
+    if lock:
+        list(owners.select_for_update().order_by("pk").values_list("pk", flat=True))
+    co_owned = set(
+        owners.exclude(user_id=user_id)
+        .filter(user__status=UserStatus.ACTIVE.value)
+        .values_list("organization_id", flat=True)
+    )
+    return [
+        {
+            "organization_id": str(row["organization_id"]),
+            "name": row["organization_display_name"],
+            "slug": row["organization_slug"],
+        }
+        for row in owned
+        if row["organization_id"] not in co_owned
+    ] + pending
+
+
+#: Who may know that a person is the *invited* owner of an organization. The
+#: access projection holds active memberships only, and ``Membership`` is
+#: under RLS, so "every organization this person was invited to own" cannot be
+#: asked here across tenants. A layer above (partner provisioning, ADR-075
+#: review M-2) names the candidate organizations; ``Membership`` decides.
+PendingOwnerSource = Callable[[UUID], Iterable[UUID]]
+_PENDING_OWNER_SOURCES: list[PendingOwnerSource] = []
+
+
+def register_pending_owner_source(source: PendingOwnerSource) -> None:
+    """Called from an app's ``ready()``; registering twice is a no-op."""
+    if source not in _PENDING_OWNER_SOURCES:
+        _PENDING_OWNER_SOURCES.append(source)
+
+
+def pending_owned_organizations(
+    user_id: UUID, *, lock: bool = False
+) -> list[dict[str, Any]]:
+    """The organizations this person is the **invited, not yet accepted**
+    owner of (ADR-075 review M-2). One owner per organization
+    (``uq_one_owner_per_org``), so an invited owner is the organization's only
+    owner: closing their account would leave it with no one who can ever
+    accept. A candidate counts only when its own ``Membership`` row, read in
+    that organization's RLS scope, says so (``resolver.is_invited_owner``);
+    ``lock`` locks that row."""
+    from workeasy360.platform.organizations.models import Organization
+    from workeasy360.platform.organizations.resolver import is_invited_owner
+
+    candidates: set[UUID] = set()
+    for source in list(_PENDING_OWNER_SOURCES):
+        candidates.update(source(user_id))
+    if not candidates:
+        return []
+    closed = {OrganizationStatus.DELETED.value, OrganizationStatus.PENDING_DELETION.value}
+    organizations = list(
+        Organization.objects.filter(id__in=candidates)
+        .exclude(status__in=closed)
+        .order_by("pk")
+        .values("id", "display_name", "slug")
+    )
+    found: list[dict[str, Any]] = []
+    for org in organizations:
+        if is_invited_owner(user_id=user_id, organization_id=org["id"], lock=lock):
+            found.append(
+                {
+                    "organization_id": str(org["id"]),
+                    "name": org["display_name"],
+                    "slug": org["slug"],
+                    "pending": True,
+                }
+            )
+    return found

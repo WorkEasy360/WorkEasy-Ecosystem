@@ -328,6 +328,9 @@ def test_the_frontend_contains_no_product_screens():
         "product-access",
         "sign-out",
         "settings",
+        # ADR-075: /help/account, central account-security support (signed out
+        # allowed). An account page, not a product screen.
+        "help",
         # ADR-065: /robots.txt, per host - the Digital Store's own host invites
         # crawlers to its public pages, every other host disallows all. A route
         # handler returning text, not a screen.

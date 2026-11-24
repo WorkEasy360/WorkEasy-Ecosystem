@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { ApiError } from "@/lib/api/client";
 import { login, logout } from "@/lib/api/auth";
+import { TwoStepSignIn, twoStepChallenge } from "@/features/auth/TwoStepSignIn";
 import { forgetAccountState } from "@/lib/accountState";
 import { ownerInvitationApi, type OwnerInvitationPreview } from "@/lib/api/partnerConsole";
 import { useSession } from "@/lib/auth/useSession";
@@ -308,6 +309,21 @@ function SignIn({ email, onSignedIn }: { email: string; onSignedIn: (email: stri
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // Accounts V3: the password was right and the account has two-step on.
+  const [challenge, setChallenge] = useState<string | null>(null);
+
+  if (challenge) {
+    return (
+      <TwoStepSignIn
+        challenge={challenge}
+        onSignedIn={(result) => onSignedIn(result.email || email)}
+        onRestart={(message) => {
+          setChallenge(null);
+          setProblem(message);
+        }}
+      />
+    );
+  }
 
   return (
     <form method="post"
@@ -321,6 +337,12 @@ function SignIn({ email, onSignedIn }: { email: string; onSignedIn: (email: stri
           (result) => onSignedIn(result.email || email),
           (err: unknown) => {
             setBusy(false);
+            const next = twoStepChallenge(err);
+            if (next) {
+              setPassword("");
+              setChallenge(next);
+              return;
+            }
             setProblem(err instanceof ApiError ? (LOGIN_PROBLEMS[err.code] ?? describeError(err)) : describeError(err));
           },
         );

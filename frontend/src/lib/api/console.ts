@@ -704,6 +704,23 @@ export interface AccountEvent {
   device_label: string;
 }
 
+export interface TwoStepStatus {
+  /** False: this deployment has no two-step key configured - nothing to set up yet. */
+  available: boolean;
+  enabled: boolean;
+  method: "totp" | null;
+  enabled_at: string | null;
+  recovery_codes_remaining: number;
+}
+
+/** A setup waiting for its first code. The secret lives in component state only. */
+export interface TwoStepSetup {
+  secret: string;
+  otpauth_uri: string;
+  qr_svg_data_uri: string;
+  expires_at: string;
+}
+
 export interface InvitationPreview {
   organization_name: string;
   email: string;
@@ -739,6 +756,27 @@ export const accountApi = {
   signOutEverywhere: () =>
     apiFetch<SignOutEverywhere>("/api/v1/auth/sessions/sign-out-everywhere", { method: "POST" }),
   activity: () => apiFetch<{ events: AccountEvent[] }>("/api/v1/auth/activity"),
+
+  /** Accounts V3: a change of sign-in email still waiting for its link. */
+  pendingEmail: () => apiFetch<{ pending: PendingEmailChange | null }>("/api/v1/auth/email/pending"),
+  resendPendingEmail: () =>
+    apiFetch<{ pending: PendingEmailChange | null }>("/api/v1/auth/email/pending/resend", { method: "POST" }),
+  cancelPendingEmail: () => apiFetch<{ pending: null }>("/api/v1/auth/email/pending", { method: "DELETE" }),
+
+  /** Accounts V3: two-step verification (an authenticator app and recovery codes).
+   * Every change asks for the password, and for a current code once it is on. */
+  twoStep: () => apiFetch<TwoStepStatus>("/api/v1/auth/two-step"),
+  twoStepSetup: (password: string, code?: string) =>
+    apiFetch<TwoStepSetup>("/api/v1/auth/two-step/setup", { method: "POST", body: json(code ? { password, code } : { password }) }),
+  twoStepConfirm: (code: string) =>
+    apiFetch<{ enabled: boolean; recovery_codes: string[]; other_sessions_ended: boolean }>("/api/v1/auth/two-step/setup/confirm", {
+      method: "POST",
+      body: json({ code }),
+    }),
+  twoStepRecoveryCodes: (password: string, code: string) =>
+    apiFetch<{ recovery_codes: string[] }>("/api/v1/auth/two-step/recovery-codes", { method: "POST", body: json({ password, code }) }),
+  twoStepDisable: (password: string, code: string) =>
+    apiFetch<{ enabled: boolean }>("/api/v1/auth/two-step/disable", { method: "POST", body: json({ password, code }) }),
 
   /** POST, so the token never travels in a URL (or an access log). */
   previewInvitation: (token: string) =>
@@ -838,6 +876,14 @@ export interface HistoryEntry extends AccountEvent {
   product_name: string | null;
 }
 
+/** A change of sign-in email waiting for the link sent to the new address (Accounts V3).
+ * The old address keeps working until it is used. */
+export interface PendingEmailChange {
+  new_email: string;
+  requested_at: string;
+  expires_at: string;
+}
+
 export interface AccountProfile {
   user_id: string;
   email: string;
@@ -845,6 +891,58 @@ export interface AccountProfile {
   email_verified: boolean;
   created_at: string | null;
   last_sign_in_at: string | null;
+  /** Accounts V3 (My Profile): `""` when not set. */
+  country: string;
+  language: string;
+  time_zone: string;
+  /** A capability URL that changes on every upload, or null. */
+  photo_url: string | null;
+  pending_email: PendingEmailChange | null;
+  two_step_enabled: boolean;
+}
+
+/** Any subset; `""` clears country, language or time zone. */
+export interface ProfileChanges {
+  full_name?: string;
+  country?: string;
+  language?: string;
+  time_zone?: string;
+}
+
+/** Codes only: the browser names them (`Intl.DisplayNames`). */
+export interface ProfileOptions {
+  countries: string[];
+  languages: string[];
+  time_zones: string[];
+}
+
+export interface NotificationPreference {
+  key: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  /** Security notices: always sent, shown on and locked. */
+  required: boolean;
+}
+
+/** One membership, for Settings' links to User Admin (never a menu of its own). */
+export interface AccountOrganization {
+  organization_id: string;
+  name: string;
+  slug: string;
+  status: string;
+  is_owner: boolean;
+  roles: string[];
+  can_view_billing: boolean;
+}
+
+export interface ClosureCheck {
+  can_close: boolean;
+  /** `pending`: the person was invited to own it and has not accepted yet. */
+  blocking_organizations: { name: string; slug: string; pending?: boolean }[];
+  /** Active partners whose last working administrator is this person. */
+  blocking_partners?: { name: string }[];
+  two_step_required: boolean;
 }
 
 export const accountCenterApi = {
@@ -868,6 +966,27 @@ export const accountCenterApi = {
       query: { ...(cursor ? { cursor } : {}), ...(scope === "all" ? { scope } : {}) },
     }),
   profile: () => apiFetch<AccountProfile>("/api/v1/auth/account/profile"),
-  updateProfile: (fullName: string) =>
-    apiFetch<AccountProfile>("/api/v1/auth/account/profile", { method: "PATCH", body: json({ full_name: fullName }) }),
+  updateProfile: (changes: ProfileChanges) =>
+    apiFetch<AccountProfile>("/api/v1/auth/account/profile", { method: "PATCH", body: json(changes) }),
+  profileOptions: () => apiFetch<ProfileOptions>("/api/v1/auth/account/profile/options"),
+  /** The picture itself as the request body (already scaled to at most 512x512 by the
+   * browser, which also drops camera metadata), its type as `Content-Type`. */
+  uploadPhoto: (photo: Blob) =>
+    apiFetch<AccountProfile>("/api/v1/auth/account/profile/photo", {
+      method: "PUT",
+      headers: { "Content-Type": photo.type },
+      body: photo,
+    }),
+  removePhoto: () => apiFetch<AccountProfile>("/api/v1/auth/account/profile/photo", { method: "DELETE" }),
+  notifications: () => apiFetch<{ preferences: NotificationPreference[] }>("/api/v1/auth/account/notifications"),
+  updateNotifications: (changes: Record<string, boolean>) =>
+    apiFetch<{ preferences: NotificationPreference[] }>("/api/v1/auth/account/notifications", {
+      method: "PATCH",
+      body: json(changes),
+    }),
+  organizations: () => apiFetch<{ organizations: AccountOrganization[] }>("/api/v1/auth/account/organizations"),
+  closure: () => apiFetch<ClosureCheck>("/api/v1/auth/account/closure"),
+  /** The server ends the session itself when the account closes. */
+  closeAccount: (body: { password: string; code?: string; confirmation: "CLOSE" }) =>
+    apiFetch<{ closed: boolean }>("/api/v1/auth/account/closure", { method: "POST", body: json(body) }),
 };

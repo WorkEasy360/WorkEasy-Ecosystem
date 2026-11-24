@@ -301,6 +301,23 @@ describe("self-service accounts", () => {
     expect(verify?.url).not.toContain("token");
   });
 
+  it("verification for a two-step account confirms the address and sends the person to sign in with their code (ADR-075 review L-6)", async () => {
+    window.history.replaceState(null, "", "/verify-email#token=abcdefghijklmnopqrstuvwxyz0123");
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_OUT],
+      "POST /api/v1/public/signup/verify": [
+        { status: 200, body: { organization_slug: "ada-co", organization_id: "o1", sign_in_required: true } },
+      ],
+    });
+    render(<VerifyEmailScreen />);
+    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "a long enough passphrase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign in" }));
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/login?verified=1"));
+    expect(nav.router.replace).not.toHaveBeenCalledWith("/dashboard");
+    // No session yet, so nothing that needs one is asked.
+    expect(calls.some((c) => c.key === "POST /api/v1/referrals/convert")).toBe(false);
+  });
+
   it("forgot password answers the same whatever the address", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_OUT],

@@ -81,6 +81,22 @@ def hit(key: str, window: int) -> int:
         return _hit_locally(key, window)
 
 
+def count(key: str) -> int:
+    """The count already held against ``key`` in this window, adding nothing -
+    for a budget spent only by failures (ADR-075 review L-2): check it before
+    the attempt, ``hit`` it after a failed one."""
+    try:
+        value = cache.get(key)
+    except Exception:  # pragma: no cover - cache backend down
+        with _local_lock:
+            expires, held = _local_windows.get(key, (0, 0))
+        return held if expires > int(time.time()) else 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _hit_locally(key: str, window: int) -> int:
     """Per-process fallback. Approximate by design - see the module docstring."""
     now = int(time.time())

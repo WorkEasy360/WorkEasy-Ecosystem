@@ -432,6 +432,10 @@ def _account_for(
         lifecycle.complete_with_password(
             existing, password or "", full_name=name, activate=True
         )
+        # ADR-075: the signup's own verification link must not outlive this.
+        from workeasy360.platform.identity import tokens
+
+        tokens.spend_all(existing.pk)
         return existing, True
     if existing is not None:
         if existing.status != UserStatus.ACTIVE.value:

@@ -1,14 +1,10 @@
-import { notFound } from "next/navigation";
-import { CenterOrganizations } from "@/features/account/AccountsCenter";
-import { centerOrigins } from "@/features/account/centerConfig";
-import { accountsTitle } from "@/features/signin/AccountsBrand";
+import { notFound, redirect } from "next/navigation";
+import { MOVED_SECTIONS, centerOrigins } from "@/features/account/centerConfig";
 
-export const metadata = { title: accountsTitle("Organizations"), robots: { index: false } };
 export const dynamic = "force-dynamic";
 
-/** ADR-072: memberships, roles and product access per organization. */
-export default function AccountOrganizationsPage() {
-  const center = centerOrigins();
-  if (!center) notFound();
-  return <CenterOrganizations appOrigin={center.appOrigin} />;
+/** ADR-072's page, moved by Accounts V3 into one of the four sections. */
+export default function MovedAccountPage() {
+  if (!centerOrigins()) notFound();
+  redirect(MOVED_SECTIONS["/account/organizations"]);
 }

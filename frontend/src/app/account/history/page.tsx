@@ -1,13 +1,10 @@
-import { notFound } from "next/navigation";
-import { LoginHistory } from "@/features/account/CenterSessions";
-import { centerOrigins } from "@/features/account/centerConfig";
-import { accountsTitle } from "@/features/signin/AccountsBrand";
+import { notFound, redirect } from "next/navigation";
+import { MOVED_SECTIONS, centerOrigins } from "@/features/account/centerConfig";
 
-export const metadata = { title: accountsTitle("Login History"), robots: { index: false } };
 export const dynamic = "force-dynamic";
 
-/** ADR-072: sign-ins, kept and refused, to WorkEasy360 and to products. */
-export default function AccountHistoryPage() {
+/** ADR-072's page, moved by Accounts V3 into one of the four sections. */
+export default function MovedAccountPage() {
   if (!centerOrigins()) notFound();
-  return <LoginHistory />;
+  redirect(MOVED_SECTIONS["/account/history"]);
 }

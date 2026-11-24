@@ -112,6 +112,19 @@ class User(AbstractBaseUser):
 
     full_name = models.CharField(max_length=255, blank=True, default="")
 
+    #: Accounts V3 (ADR-075): the person's own profile. Display guidance only -
+    #: never an organization's reporting, tax or billing setting. Empty = not set.
+    #: ISO 3166-1 alpha-2 (``contracts.values.countries``).
+    country = models.CharField(max_length=2, blank=True, default="", db_default="")
+    #: A code from ``contracts.values.languages.LANGUAGES``.
+    language = models.CharField(max_length=16, blank=True, default="", db_default="")
+    #: An IANA time zone name (``zoneinfo``).
+    time_zone = models.CharField(max_length=64, blank=True, default="", db_default="")
+    #: Set when the person closed their own account (ADR-075). The account is
+    #: then ``disabled``; the timestamp tells a self-service closure apart from
+    #: a staff action.
+    closed_at = models.DateTimeField(null=True, blank=True)
+
     status = models.CharField(
         max_length=16,
         choices=[(s.value, s.name.title()) for s in UserStatus],
@@ -346,6 +359,21 @@ class AccountEvent(models.Model):
         PRODUCT_SIGNED_OUT = "product_signed_out", "Signed out of a product"
         #: ADR-072: the person changed their own name on WorkEasy360 Accounts.
         PROFILE_UPDATED = "profile_updated", "Profile updated"
+        #: ADR-075: the person's own two-step verification and recovery codes.
+        TWO_STEP_ENABLED = "two_step_enabled", "Two-step verification turned on"
+        TWO_STEP_REPLACED = "two_step_replaced", "Authenticator app replaced"
+        TWO_STEP_DISABLED = "two_step_disabled", "Two-step verification turned off"
+        RECOVERY_CODES_REGENERATED = (
+            "recovery_codes_regenerated",
+            "New recovery codes created",
+        )
+        RECOVERY_CODE_USED = "recovery_code_used", "Recovery code used"
+        #: ADR-075: a pending change of sign-in email was cancelled.
+        EMAIL_CHANGE_CANCELLED = "email_change_cancelled", "Email change cancelled"
+        #: ADR-075: the person's notification choices changed.
+        NOTIFICATIONS_CHANGED = "notifications_changed", "Notification settings changed"
+        #: ADR-075: the person closed their own account.
+        ACCOUNT_CLOSED = "account_closed", "Account closed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
@@ -517,3 +545,202 @@ class SessionHandoff(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"hand-off to {self.portal} for {self.user_id}"
+
+
+# --- Accounts V3 (ADR-075) ------------------------------------------------------------
+
+
+class ProfilePhoto(models.Model):
+    """The person's own profile photo (ADR-075).
+
+    A person has no organization, so the tenant-scoped file store cannot hold
+    it. The image is small (``PROFILE_PHOTO_MAX_BYTES``), checked by its magic
+    bytes and served only as the type it was checked as. ``token`` is the
+    capability in its URL: 256 random bits, new on every upload, so an old
+    URL stops working the moment the photo is replaced or removed.
+    """
+
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, primary_key=True, related_name="profile_photo"
+    )
+    token = models.CharField(max_length=64, unique=True)
+    content_type = models.CharField(max_length=32)
+    data = models.BinaryField()
+    sha256 = models.CharField(max_length=64)
+    updated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "identity_profile_photo"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"photo of {self.user_id}"
+
+
+class TwoStepMethod(models.Model):
+    """The person's authenticator app (TOTP, RFC 6238) - ADR-075.
+
+    Personal and optional: no organization can require it and nothing steps
+    up to it (ADR-050 stays for both). A row with ``confirmed_at`` empty is a
+    setup in progress; it does nothing until a code from the app confirms it.
+    At most one confirmed and one in-progress row per person.
+
+    Not ``AuthFactor``: that table keeps the factors enrolled before ADR-050,
+    dormant, so none of them comes back to life by accident.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    #: Fernet ciphertext of the raw secret under ``TWO_STEP_KEY`` - never the
+    #: secret itself.
+    secret_ciphertext = models.TextField()
+    #: The last accepted time step: a code at or before it is refused
+    #: (RFC 6238 section 5.2, no replay).
+    last_used_step = models.BigIntegerField(default=0)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    #: For a setup in progress: when it stops being confirmable.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "identity_two_step_method"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(confirmed_at__isnull=False),
+                name="uq_two_step_one_confirmed",
+            ),
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(confirmed_at__isnull=True),
+                name="uq_two_step_one_pending",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"two-step for {self.user_id}"
+
+
+class TwoStepRecoveryCode(models.Model):
+    """One single-use recovery code (ADR-075). Only a keyed hash is stored;
+    the codes are shown to the person once.
+
+    Unique per person, not across everyone (review L-3): a code is only ever
+    looked up with its owner, and two people drawing the same random 40-bit
+    code must not turn the second person's new codes into a 500."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    code_hash = models.CharField(max_length=64)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "identity_two_step_recovery_code"
+        indexes = [models.Index(fields=["user", "used_at"], name="ix_recovery_user_used")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "code_hash"], name="uq_recovery_code_per_user"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"recovery code of {self.user_id}"
+
+
+class TwoStepChallenge(models.Model):
+    """The second half of a sign-in (ADR-075): the password was right, the
+    session is not established until a code is. ``token_hash`` is a SHA-256
+    of the 256-bit challenge the browser holds; the row lives minutes and
+    allows a few attempts. ``auth_state`` carries what the password step
+    learnt (the remember-me choice, which organizations' password policies
+    the password falls short of) so the password itself is never kept."""
+
+    token_hash = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    auth_state = models.JSONField(default=dict)
+    #: ``User.session_epoch`` at the password step: a password reset or
+    #: "sign out everywhere" in between voids the challenge.
+    session_epoch = models.PositiveIntegerField(default=0)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "identity_two_step_challenge"
+        indexes = [models.Index(fields=["expires_at"], name="ix_two_step_challenge_exp")]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"two-step challenge for {self.user_id}"
+
+
+class PersonalPreference(models.Model):
+    """A person's own notification choice (ADR-075). Absence = the default in
+    ``identity.preferences``; required security notices have no row and
+    cannot be turned off."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    key = models.CharField(max_length=64)
+    enabled = models.BooleanField()
+    updated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "identity_personal_preference"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "key"], name="uq_personal_preference")
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.key} for {self.user_id}"
+
+
+class AccountSupportCase(models.Model):
+    """A request to central account-security support (ADR-075).
+
+    Central only: never routed to a partner and not tied to an organization.
+    ``matched_user`` is filled when the address belongs to an account, for
+    staff to see; it proves nothing about who wrote the request and grants
+    nothing - recovery still needs the account's own channels."""
+
+    class Topic(models.TextChoices):
+        CANNOT_SIGN_IN = "cannot_sign_in", "I cannot sign in"
+        LOST_TWO_STEP = "lost_two_step", "I lost my authenticator and recovery codes"
+        ACCOUNT_COMPROMISED = (
+            "account_compromised",
+            "Someone else may be using my account",
+        )
+        CLOSURE = "closure", "Closing my account"
+        OTHER = "other", "Something else"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        RESOLVED = "resolved", "Resolved"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reference = models.CharField(max_length=16, unique=True)
+    email = models.EmailField(max_length=254)
+    name = models.CharField(max_length=201, blank=True, default="")
+    topic = models.CharField(max_length=32, choices=Topic.choices)
+    message = models.TextField(max_length=4000)
+    matched_user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    note = models.TextField(blank=True, default="", max_length=4000)
+    created_at = models.DateTimeField(default=timezone.now)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        db_table = "identity_account_support_case"
+        indexes = [
+            models.Index(
+                fields=["status", "created_at"], name="ix_account_support_status"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.reference}"

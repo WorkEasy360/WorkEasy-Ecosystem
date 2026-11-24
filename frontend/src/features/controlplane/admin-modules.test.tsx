@@ -32,7 +32,7 @@ describe("the Admin console's map", () => {
   });
 
   it("gives each module the brief's one row of tabs", () => {
-    expect(tabs("customers")).toEqual(["Organizations", "Users", "Product setup", "Product access"]);
+    expect(tabs("customers")).toEqual(["Organizations", "Users", "Account support", "Product setup", "Product access"]);
     expect(tabs("partners")).toEqual(["Overview", "Partners", "Applications", "Commissions", "Payouts", "Requests"]);
     expect(tabs("products")).toEqual(["Products", "Plans", "Usage pricing", "Store"]);
     expect(tabs("billing")).toEqual(["Needs attention", "Orders", "Subscriptions", "Invoices", "Payments", "Refunds", "Credit notes"]);

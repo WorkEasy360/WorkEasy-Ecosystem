@@ -534,6 +534,10 @@ def history_view(request: HttpRequest, user: Any) -> JsonResponse:
 
 
 def _profile_json(user: Any) -> dict[str, Any]:
+    from workeasy360.platform.administration import self_service
+    from workeasy360.platform.identity import two_step
+
+    token = account.profile_photo_token(user.id)
     return {
         "user_id": str(user.id),
         "email": user.email,
@@ -541,21 +545,189 @@ def _profile_json(user: Any) -> dict[str, Any]:
         "email_verified": user.email_verified_at is not None,
         "created_at": _iso(user.created_at),
         "last_sign_in_at": _iso(user.last_login_at),
+        "country": user.country,
+        "language": user.language,
+        "time_zone": user.time_zone,
+        "photo_url": f"/api/v1/public/profile-photos/{token}" if token else None,
+        "pending_email": self_service.pending_email_change(user.id),
+        "two_step_enabled": two_step.is_enabled(user.id),
     }
 
 
 @require_http_methods(["GET", "PATCH"])
 @center
 def profile_view(request: HttpRequest, user: Any) -> JsonResponse:
-    """The person's profile. ``PATCH {"full_name"}`` changes the display name
-    (and only that: the sign-in email has its own confirmed change)."""
+    """The person's profile (ADR-072, ADR-075). ``PATCH`` takes any of
+    ``full_name``, ``country``, ``language``, ``time_zone`` (an empty value
+    clears the last three). The sign-in email has its own confirmed change."""
     if request.method == "PATCH":
+        blocked = limited(request, "profile", user=user)
+        if blocked is not None:
+            return blocked
         body = _body(request)
         where = connection_facts(request)
+        fields = {
+            name: body[name]
+            for name in ("full_name", "country", "language", "time_zone")
+            if name in body
+        }
         user = account.update_profile(
             user.id,
-            full_name=body.get("full_name"),
+            **fields,
             ip_prefix=where["ip_prefix"],
             device_label=where["device_label"],
         )
     return JsonResponse(_profile_json(user))
+
+
+@require_http_methods(["GET"])
+@center
+def profile_options_view(request: HttpRequest, user: Any) -> JsonResponse:
+    """What the profile form offers: codes only (names are the browser's)."""
+    from workeasy360.contracts.values.countries import COUNTRY_CODES
+    from workeasy360.contracts.values.languages import LANGUAGES
+
+    return JsonResponse(
+        {
+            "countries": sorted(COUNTRY_CODES),
+            "languages": list(LANGUAGES),
+            "time_zones": account.time_zone_names(),
+        }
+    )
+
+
+@require_http_methods(["PUT", "DELETE"])
+@center
+def profile_photo_view(request: HttpRequest, user: Any) -> JsonResponse:
+    """``PUT`` the raw image (PNG, JPEG or WebP, checked by its bytes), or
+    ``DELETE`` it. The photo's URL changes every time."""
+    blocked = limited(request, "profile", user=user)
+    if blocked is not None:
+        return blocked
+    where = connection_facts(request)
+    if request.method == "DELETE":
+        account.remove_profile_photo(
+            user.id, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+        )
+    else:
+        account.set_profile_photo(
+            user.id,
+            request.body,
+            declared_type=request.content_type or "",
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    from workeasy360.platform.identity.models import User
+
+    return JsonResponse(_profile_json(User.objects.get(pk=user.id)))
+
+
+# --- Settings (ADR-075) --------------------------------------------------------------
+
+
+@require_http_methods(["GET", "PATCH"])
+@center
+def notifications_view(request: HttpRequest, user: Any) -> JsonResponse:
+    """The person's own notification choices; security notices are locked on."""
+    from workeasy360.platform.identity import preferences
+
+    if request.method == "PATCH":
+        blocked = limited(request, "profile", user=user)
+        if blocked is not None:
+            return blocked
+        where = connection_facts(request)
+        rows = preferences.update_choices(
+            user.id,
+            _body(request),
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    else:
+        rows = preferences.list_choices(user.id)
+    return JsonResponse({"preferences": rows})
+
+
+@require_http_methods(["GET"])
+@center
+def organizations_view(request: HttpRequest, user: Any) -> JsonResponse:
+    """The person's organizations, for the authorized links to User Admin,
+    subscriptions and billing. Nothing of an organization is shown beyond its
+    name and the person's own roles; billing is linked only for a role that
+    may see it there."""
+    from workeasy360.platform.authz import services as authz
+
+    rows = []
+    for visit in _visits(request, user):
+        may_bill = False
+        roles: list[str] = []
+        if visit.denial is None and visit.resolution is not None:
+            with transaction.atomic(), _inside(visit) as ctx:
+                roles = authz.system_role_keys([ctx.membership_id]).get(
+                    str(ctx.membership_id), []
+                )
+                may_bill = "commercial.subscription.view" in authz.effective_permissions(
+                    ctx
+                )
+        rows.append(
+            {
+                "organization_id": visit.organization_id,
+                "name": visit.name,
+                "slug": visit.slug,
+                "status": visit.status,
+                "is_owner": visit.is_owner,
+                "roles": roles,
+                "restricted": visit.denial,
+                "can_view_billing": may_bill,
+            }
+        )
+    return JsonResponse({"organizations": rows})
+
+
+@require_http_methods(["GET", "POST"])
+@center
+def closure_view(request: HttpRequest, user: Any) -> JsonResponse:
+    """``GET``: whether the account can be closed, and what blocks it.
+    ``POST {password, code?, confirmation: "CLOSE"}``: close it; this
+    session ends with it."""
+    from django.contrib.auth import logout as django_logout
+
+    from workeasy360.platform.administration import account_security
+
+    if request.method == "GET":
+        return JsonResponse(account_security.closure_check(user.id))
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+    from workeasy360.interfaces.api.v1.control_plane_http import (
+        failures_exhausted,
+        spend_failure,
+    )
+
+    blocked = limited(request, "account_closure", user=user)
+    if blocked is not None:
+        return blocked
+    # ADR-075 review L-1: closure checks the two-step code too, so it shares
+    # the account changes' day budget for wrong codes and their hourly notice.
+    blocked = failures_exhausted("two_step_daily", user=user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    where = connection_facts(request)
+    try:
+        account_security.close_account(
+            user.id,
+            password=body.get("password"),
+            code=body.get("code"),
+            confirmation=body.get("confirmation"),
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    except TwoStepCodeInvalid:
+        spend_failure("two_step_daily", user=user)
+        account_security.two_step_code_refused(
+            user,
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+            at_sign_in=False,
+        )
+        raise
+    django_logout(request)
+    return JsonResponse({"closed": True})

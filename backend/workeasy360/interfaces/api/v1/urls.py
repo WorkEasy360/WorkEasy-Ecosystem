@@ -56,6 +56,10 @@ urlpatterns = [
     # Not under the tenant path shape: reached before any organization is
     # selected, which is the whole point of existing (Tasks 4, 5).
     path("auth/login", auth_views.login_view, name="auth-login"),
+    # ADR-075: the code step of a sign-in with two-step verification on.
+    path(
+        "auth/login/two-step", auth_views.login_two_step_view, name="auth-login-two-step"
+    ),
     path("auth/logout", auth_views.logout_view, name="auth-logout"),
     # ADR-066: Switch Account - started on a portal, finished on the central
     # sign-in host (the session products are signed in with).
@@ -91,6 +95,37 @@ urlpatterns = [
     path("auth/password", account_views.password_view, name="auth-password"),
     # ADR-066: change the sign-in email (a link to the new address confirms).
     path("auth/email", account_views.email_change_view, name="auth-email"),
+    # ADR-075: the pending change - status, resend, cancel.
+    path(
+        "auth/email/pending", account_views.email_pending_view, name="auth-email-pending"
+    ),
+    path(
+        "auth/email/pending/resend",
+        account_views.email_pending_resend_view,
+        name="auth-email-pending-resend",
+    ),
+    # ADR-075: personal two-step verification.
+    path("auth/two-step", account_views.two_step_view, name="auth-two-step"),
+    path(
+        "auth/two-step/setup",
+        account_views.two_step_setup_view,
+        name="auth-two-step-setup",
+    ),
+    path(
+        "auth/two-step/setup/confirm",
+        account_views.two_step_confirm_view,
+        name="auth-two-step-confirm",
+    ),
+    path(
+        "auth/two-step/recovery-codes",
+        account_views.two_step_recovery_codes_view,
+        name="auth-two-step-recovery-codes",
+    ),
+    path(
+        "auth/two-step/disable",
+        account_views.two_step_disable_view,
+        name="auth-two-step-disable",
+    ),
     path("auth/sessions", account_views.sessions_view, name="auth-sessions"),
     path(
         "auth/sessions/sign-out-everywhere",
@@ -151,6 +186,32 @@ urlpatterns = [
         "auth/account/profile",
         accounts_center_views.profile_view,
         name="auth-account-profile",
+    ),
+    # ADR-075: the rest of My Profile and Settings.
+    path(
+        "auth/account/profile/options",
+        accounts_center_views.profile_options_view,
+        name="auth-account-profile-options",
+    ),
+    path(
+        "auth/account/profile/photo",
+        accounts_center_views.profile_photo_view,
+        name="auth-account-profile-photo",
+    ),
+    path(
+        "auth/account/notifications",
+        accounts_center_views.notifications_view,
+        name="auth-account-notifications",
+    ),
+    path(
+        "auth/account/organizations",
+        accounts_center_views.organizations_view,
+        name="auth-account-organizations",
+    ),
+    path(
+        "auth/account/closure",
+        accounts_center_views.closure_view,
+        name="auth-account-closure",
     ),
     # The invitee's side of an invitation: reached before any membership
     # exists, so not under the tenant path. POST for both, so the token never
@@ -273,6 +334,17 @@ urlpatterns = [
         "public/password/forgot",
         public_site_views.forgot_password_view,
         name="public-password-forgot",
+    ),
+    # ADR-075: a profile photo by its capability URL, and account support.
+    path(
+        "public/profile-photos/<str:token>",
+        public_views.profile_photo_view,
+        name="public-profile-photo",
+    ),
+    path(
+        "public/account-support",
+        public_views.account_support_view,
+        name="public-account-support",
     ),
     path(
         "public/password/reset",
@@ -1627,6 +1699,17 @@ _admin = [
         "admin/users/<uuid:user_id>/<slug:action>",
         admin_console_views.user_action_view,
         name="admin-user-action",
+    ),
+    # ADR-075: central account-security support.
+    path(
+        "admin/account-support",
+        admin_console_views.account_support_view,
+        name="admin-account-support",
+    ),
+    path(
+        "admin/account-support/<uuid:case_id>",
+        admin_console_views.account_support_case_view,
+        name="admin-account-support-case",
     ),
     path(
         "admin/communication/templates",

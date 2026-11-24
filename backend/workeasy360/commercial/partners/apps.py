@@ -52,6 +52,17 @@ class PartnersConfig(AppConfig):
 
         register_gauges("partner_domains", _domain_gauges)
 
+        # ADR-075 review M-1/M-2: closing an account never leaves an active
+        # partner without an administrator, nor a provisioned customer whose
+        # invited owner can never accept. account_security sits below this
+        # module, so it asks through these two registrations.
+        from workeasy360.commercial.partners import closure
+        from workeasy360.platform.administration import account_security
+        from workeasy360.platform.organizations import selectors as org_selectors
+
+        account_security.register_partner_admin_check(closure.partners_left_without_admin)
+        org_selectors.register_pending_owner_source(closure.invited_owner_organizations)
+
 
 def _domain_gauges() -> list[tuple[str, dict[str, str], float]]:
     from django.db.models import Count

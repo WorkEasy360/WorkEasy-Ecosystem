@@ -77,6 +77,9 @@ PORTAL_PATH_PREFIXES: Final = {
         "/settings",
         # ADR-053: a partner's branded Store, where a buyer returns after sign-in.
         "/store",
+        # ADR-075: an invitee who signs in from the invitation page returns to
+        # it (the token itself stays in the link's fragment, never in ``next``).
+        "/invitations",
     ),
     # ADR-065: the Store's own host serves only the Store's pages.
     STORE: ("/store",),

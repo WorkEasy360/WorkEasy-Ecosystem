@@ -257,6 +257,15 @@ export interface SignupRequest {
   company_name?: string;
 }
 
+export type AccountSupportTopic = "cannot_sign_in" | "lost_two_step" | "account_compromised" | "closure" | "other";
+
+export interface AccountSupportRequest {
+  email: string;
+  name: string;
+  topic: AccountSupportTopic;
+  message: string;
+}
+
 const post = <T>(path: string, body: unknown) =>
   apiFetch<T>(path, { method: "POST", body: JSON.stringify(body) });
 
@@ -281,14 +290,19 @@ export const publicApi = {
   /** Always 202 "check your email" - whether or not the address is registered. */
   signup: (body: SignupRequest) => post<{ status: string }>("/api/v1/public/signup", body),
   /** The emailed link's token and the password chosen at signup, together;
-   * signs the person in. */
+   * signs the person in - unless `sign_in_required` (two-step is on: the
+   * code is asked on the sign-in page, never skipped by a link). */
   verifyEmail: (token: string, password: string) =>
-    post<{ organization_slug: string | null; organization_id: string | null }>("/api/v1/public/signup/verify", {
+    post<{ organization_slug: string | null; organization_id: string | null; sign_in_required?: boolean }>("/api/v1/public/signup/verify", {
       token,
       password,
     }),
   resendVerification: (email: string) => post<{ status: string }>("/api/v1/public/signup/resend", { email }),
   forgotPassword: (email: string) => post<{ status: string }>("/api/v1/public/password/forgot", { email }),
+  /** Accounts V3: a personal account-security case for WorkEasy360's restricted
+   * account support (never a partner). The same answer whether or not an account
+   * exists; signed in or not. */
+  accountSupport: (body: AccountSupportRequest) => post<{ reference: string }>("/api/v1/public/account-support", body),
   /** ADR-066: the emailed change-of-sign-in-email link. */
   confirmEmailChange: (token: string) => post<{ status: string }>("/api/v1/public/email/confirm", { token }),
   resetPassword: (token: string, password: string) =>

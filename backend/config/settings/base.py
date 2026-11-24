@@ -1621,3 +1621,55 @@ CONTROL_PLANE_RATE_LIMITS.update(
         ),
     }
 )
+
+# --- Accounts V3 (ADR-075) ------------------------------------------------------------
+#
+# Personal two-step verification. A Fernet key (32 url-safe base64 bytes) that
+# encrypts each person's authenticator secret and keys the recovery-code hashes.
+# Absent: the feature is unavailable (setup answers 503); an account that has
+# two-step on cannot be signed in by password alone (fail closed). A new name,
+# not the key ADR-050 retired, so the secrets enrolled before ADR-050 can never
+# be read by this code. It cannot be rotated without
+# every person setting up their authenticator again.
+TWO_STEP_KEY = env.secret("W360_TWO_STEP_KEY", "").encode("ascii")
+#: A profile photo, after the browser scaled it (ADR-075).
+PROFILE_PHOTO_MAX_BYTES = env.int("W360_PROFILE_PHOTO_MAX_BYTES", 262144)
+
+CONTROL_PLANE_RATE_LIMITS.update(
+    {
+        # The code step of a sign-in: per address, and per person (5 wrong
+        # codes also end one challenge).
+        "two_step_login_ip": (env.int("W360_RL_TWO_STEP_LOGIN_IP", 30), 60),
+        "two_step_login_user": (env.int("W360_RL_TWO_STEP_LOGIN_USER", 10), 300),
+        # A day's budget per person: with a challenge for every 5 wrong codes, the
+        # 5-minute bucket alone would allow ~2,900 guesses a day.
+        "two_step_login_daily_user": (
+            env.int("W360_RL_TWO_STEP_LOGIN_DAILY_USER", 30),
+            86400,
+        ),
+        # Setting up, replacing, regenerating, turning off: password + code.
+        "two_step_user": (env.int("W360_RL_TWO_STEP_USER", 10), 300),
+        "two_step_ip": (env.int("W360_RL_TWO_STEP_IP", 30), 60),
+        # And a day's budget per person, as at sign-in: the 5-minute bucket
+        # alone would allow ~2,900 code guesses a day from a live session.
+        "two_step_daily_user": (env.int("W360_RL_TWO_STEP_DAILY_USER", 30), 86400),
+        # Resending the email-change link: each one mails the new address.
+        "email_change_resend_user": (
+            env.int("W360_RL_EMAIL_CHANGE_RESEND_USER", 3),
+            3600,
+        ),
+        # Profile writes (name, photo, preferences).
+        "profile_user": (env.int("W360_RL_PROFILE_USER", 30), 60),
+        # Account closure: password-checked.
+        "account_closure_user": (env.int("W360_RL_ACCOUNT_CLOSURE_USER", 5), 3600),
+        # Public account-security support: per address and per inbox.
+        "account_support_ip": (env.int("W360_RL_ACCOUNT_SUPPORT_IP", 5), 3600),
+        "account_support_account": (env.int("W360_RL_ACCOUNT_SUPPORT_ACCOUNT", 3), 86400),
+    }
+)
+
+CELERY_BEAT_SCHEDULE["identity-prune-two-step"] = {
+    "task": "platform.identity.prune_two_step",
+    "schedule": env.float("W360_BEAT_TWO_STEP_PRUNE_S", 3600.0),
+    "options": {"queue": "heavy", "expires": 600},
+}
