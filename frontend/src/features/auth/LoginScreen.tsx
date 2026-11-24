@@ -156,6 +156,13 @@ function SignInCard({ portal }: { portal: HostPortal }) {
           {reauthenticating(searchParams) ? "Confirm it's you" : platform || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
       </div>
+      {searchParams.get("verified") === "1" && (
+        // ADR-075: the email address is confirmed, and two-step is on, so the
+        // sign-in still asks for the code.
+        <p role="status" className={styles.note}>
+          Your email address is confirmed. Sign in with your password and the code from your authenticator app.
+        </p>
+      )}
       {searchParams.get("closed") === "1" && (
         // Accounts V3: the person has just closed their account (Settings -> Close account).
         <p role="status" className={styles.note}>

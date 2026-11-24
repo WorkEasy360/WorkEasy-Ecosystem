@@ -407,19 +407,24 @@ def email_pending_resend_view(request: HttpRequest) -> JsonResponse:
 
 
 def _two_step_limited(request: HttpRequest, user: Any) -> JsonResponse | None:
-    for bucket in ("two_step", "two_step_daily"):
-        blocked = limited(request, bucket, user=user)
-        if blocked is not None:
-            return blocked
-    return None
+    """Every attempt counts toward the 5-minute bucket; the day's budget
+    counts wrong codes only (``_code_refused``, ADR-075 review L-2)."""
+    from workeasy360.interfaces.api.v1.control_plane_http import failures_exhausted
+
+    blocked = limited(request, "two_step", user=user)
+    if blocked is not None:
+        return blocked
+    return failures_exhausted("two_step_daily", user=user)
 
 
 def _code_refused(request: HttpRequest, user: Any) -> None:
-    """A wrong current code on an account change: counted toward the same
-    hourly notice as the sign-in's (someone holds the password and a live
-    session)."""
+    """A wrong current code on an account change: spent from the day's
+    budget, and counted toward the same hourly notice as the sign-in's
+    (someone holds the password and a live session)."""
+    from workeasy360.interfaces.api.v1.control_plane_http import spend_failure
     from workeasy360.platform.administration import account_security
 
+    spend_failure("two_step_daily", user=user)
     where = connection_facts(request)
     account_security.two_step_code_refused(
         user,

@@ -337,6 +337,12 @@ export function VerifyEmailScreen() {
     setProblems([]);
     try {
       const result = await publicApi.verifyEmail(token ?? "", password);
+      if (result.sign_in_required) {
+        // ADR-075: two-step is on - the address is confirmed, but the sign-in
+        // needs the code, so no session exists yet (review L-6).
+        router.replace("/login?verified=1");
+        return;
+      }
       await finishSignIn(router, result.organization_id, origins);
     } catch (err) {
       if (err instanceof ApiError && err.code === "link_invalid") {

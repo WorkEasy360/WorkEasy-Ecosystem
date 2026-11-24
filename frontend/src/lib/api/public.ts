@@ -290,9 +290,10 @@ export const publicApi = {
   /** Always 202 "check your email" - whether or not the address is registered. */
   signup: (body: SignupRequest) => post<{ status: string }>("/api/v1/public/signup", body),
   /** The emailed link's token and the password chosen at signup, together;
-   * signs the person in. */
+   * signs the person in - unless `sign_in_required` (two-step is on: the
+   * code is asked on the sign-in page, never skipped by a link). */
   verifyEmail: (token: string, password: string) =>
-    post<{ organization_slug: string | null; organization_id: string | null }>("/api/v1/public/signup/verify", {
+    post<{ organization_slug: string | null; organization_id: string | null; sign_in_required?: boolean }>("/api/v1/public/signup/verify", {
       token,
       password,
     }),

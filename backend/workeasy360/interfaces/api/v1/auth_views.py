@@ -130,16 +130,24 @@ def login_two_step_view(request: HttpRequest) -> JsonResponse:
     the challenge from ``login_view`` and a code from the authenticator app
     (or a recovery code). Answers exactly what a successful ``login_view``
     does. CSRF-protected like the password step."""
-    from workeasy360.interfaces.api.v1.control_plane_http import limited
+    from workeasy360.interfaces.api.v1.control_plane_http import (
+        failures_exhausted,
+        limited,
+        spend_failure,
+    )
     from workeasy360.platform.identity import two_step
 
     body = _body(request)
     token = body.get("challenge")
     owner = two_step.challenge_user(token)
-    for bucket in ("two_step_login", "two_step_login_daily"):
-        blocked = limited(request, bucket, user=owner)
-        if blocked is not None:
-            return blocked
+    blocked = limited(request, "two_step_login", user=owner)
+    if blocked is not None:
+        return blocked
+    # The day's budget counts wrong codes only: a person who signs in many
+    # times a day with the right code is never locked out (ADR-075 review L-2).
+    blocked = failures_exhausted("two_step_login_daily", user=owner)
+    if blocked is not None:
+        return blocked
     from workeasy360.contracts.errors import TwoStepCodeInvalid
 
     try:
@@ -148,6 +156,7 @@ def login_two_step_view(request: HttpRequest) -> JsonResponse:
         if owner is not None:
             from workeasy360.platform.administration import account_security
 
+            spend_failure("two_step_login_daily", user=owner)
             where = connection_facts(request)
             account_security.two_step_code_refused(
                 owner, ip_prefix=where["ip_prefix"], device_label=where["device_label"]

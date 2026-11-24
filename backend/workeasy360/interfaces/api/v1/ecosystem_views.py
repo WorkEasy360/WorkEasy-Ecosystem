@@ -516,7 +516,13 @@ def _restart_with_own_organization(
     organizations - the product refuses a code for an organization other than
     the one it asked for. The membership (and the organization's access
     policy) is checked here first; the restart is recorded as this sign-in's
-    answer for the product, so the restarted request asks nothing again."""
+    answer for the product, so the restarted request asks nothing again.
+
+    When the person's own organization cannot be opened either (its access
+    policy, its status), that refusal is about an organization the product
+    never asked for: the product's request is answered about the one it named,
+    which this person cannot open - ``membership_inactive``, the answer it
+    would have had with no offer at all (ADR-075 review L-5)."""
     try:
         authorization.resolve_subject(
             user_id=user.pk,
@@ -524,7 +530,18 @@ def _restart_with_own_organization(
             facts=_session_facts(request, organization_id),
         )
     except protocol.OAuthError as exc:
-        return _redirect_pending_error(pending_request, exc)
+        logger.info(
+            "ecosystem.authorize.own_organization_refused",
+            product_code=pending_request.integration.product_code,
+            error=exc.error,
+        )
+        return _redirect_pending_error(
+            pending_request,
+            protocol.OAuthError(
+                protocol.MEMBERSHIP_INACTIVE,
+                "You do not have access to this organization.",
+            ),
+        )
     restart = authorization.launch_with_organization(
         pending_request.integration, organization_id
     )
