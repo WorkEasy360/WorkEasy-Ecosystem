@@ -294,41 +294,100 @@ describe("the sections", () => {
 });
 
 describe("My Profile", () => {
-  it("opens first: photo or initials, name, verified email and WorkEasy360 ID; four menus only; Help & Support; passes axe", async () => {
-    mockApi({ "GET /api/v1/auth/account/profile": [ok(profile({ name: "Ravi Kumar" }))] });
+  /** What every My Profile page asks besides the profile: the session (the top bar)
+   * and the recent security activity (the overview). */
+  const PAGE = {
+    "GET /api/v1/auth/session": [ok(SESSION)],
+    "GET /api/v1/auth/activity": [
+      ok({
+        events: [
+          { occurred_at: "2026-11-20T09:00:00Z", kind: "sign_in", reason: "", ip_prefix: "203.0.113.0/24", device_label: "Chrome on Windows" },
+          { occurred_at: "2026-11-14T04:10:00Z", kind: "password_changed", reason: "", ip_prefix: "", device_label: "" },
+        ],
+      }),
+    ],
+  };
+
+  it("opens first: a greeting, photo or initials, name, verified email and WorkEasy360 ID; four menus only; Help & Support; passes axe", async () => {
+    mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile({ name: "Ravi Kumar", time_zone: "Asia/Kolkata", country: "IN", language: "en" }))] });
     const { container } = render(<CenterProfile />);
-    expect(screen.getByRole("heading", { level: 1, name: "My Profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: /^Good (morning|afternoon|evening), Ravi!$/ })).toBeInTheDocument();
     expect(await screen.findByText(USER_ID)).toBeInTheDocument();
     const header = screen.getByRole("region", { name: "Your WorkEasy360 account" });
     expect(within(header).getByText("Ravi Kumar")).toBeInTheDocument();
     expect(within(header).getByText("ravi@example.com")).toBeInTheDocument();
-    expect(within(header).getByText("Verified")).toBeInTheDocument();
+    expect(within(header).getByText("Verified email")).toBeInTheDocument();
     expect(within(header).getByText("RK")).toBeInTheDocument();
+    expect(within(header).getByText("India")).toBeInTheDocument();
+    expect(within(header).getByText("Asia / Kolkata")).toBeInTheDocument();
+    // Exactly four menus, My Profile current - the reference's "Home" is not a fifth.
     const nav = screen.getByRole("navigation", { name: "Your account" });
     expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual(["My Profile", "Login & Security", "Devices & Sessions", "Settings"]);
     expect(within(nav).getByRole("link", { name: "My Profile" })).toHaveAttribute("aria-current", "page");
-    expect(container.textContent).not.toMatch(/My Products|Connected Logins|Wallet|Product Catalog/);
+    expect(container.textContent).not.toMatch(/My Products|Connected Logins|Wallet|Product Catalog|AI Assistant|Mobile/);
+    // The four sections as cards, each opening its page.
+    const cards = screen.getByRole("list", { name: "Your account's sections" });
+    expect(within(cards).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
+      "#profile-details",
+      "/account/security",
+      "/account/sessions",
+      "/account/settings",
+    ]);
+    // Security at a glance: what the account really has, the password date from the activity.
+    const security = screen.getByRole("region", { name: "Account Security" });
+    expect(within(security).getByText("Review your security")).toBeInTheDocument();
+    expect(within(security).getByText("Off")).toBeInTheDocument();
+    expect(await within(security).findByText(/^Last changed /)).toBeInTheDocument();
+    const activity = screen.getByRole("region", { name: "Recent Security Activity" });
+    expect(await within(activity).findByText(/Chrome on Windows/)).toBeInTheDocument();
+    expect(within(activity).getByRole("link", { name: /View all/ })).toHaveAttribute("href", "/account/settings#security-activity");
+    // Help & Support: the top bar's icon, and the sidebar card's Get Support.
     expect(screen.getByRole("link", { name: "Help & Support" })).toHaveAttribute("href", "/help/account");
+    expect(screen.getByRole("link", { name: /Get Support/ })).toHaveAttribute("href", "/help/account");
+    // Switch account and Sign out live in the account menu.
+    const menu = screen.getByRole("button", { name: "Account menu" });
+    expect(menu).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Switch account" })).not.toBeInTheDocument();
+    fireEvent.click(menu);
+    expect(menu).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Switch account" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(menu).toHaveAttribute("aria-expanded", "false");
     await expectNoViolations(container);
+  });
+
+  it("Edit Profile and the photo button open the details in edit mode", async () => {
+    mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile())], "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)] });
+    render(<CenterProfile />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Profile" }));
+    const card = screen.getByRole("region", { name: "Profile" });
+    expect(await within(card).findByLabelText("Full name")).toHaveValue("Ravi");
+    fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    expect(within(card).queryByLabelText("Full name")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change photo" }));
+    expect(await within(card).findByLabelText("Choose a photo")).toBeInTheDocument();
   });
 
   it("shows an unverified email and a pending change as such, and the photo when there is one", async () => {
     mockApi({
+      ...PAGE,
       "GET /api/v1/auth/account/profile": [
         ok(profile({ email_verified: false, pending_email: PENDING, photo_url: "/api/v1/public/profile-photos/tok-1" })),
       ],
     });
     render(<CenterProfile />);
     const header = await screen.findByRole("region", { name: "Your WorkEasy360 account" });
-    expect(await within(header).findByText("Not verified")).toBeInTheDocument();
+    expect(await within(header).findByText("Email not verified")).toBeInTheDocument();
     expect(within(header).getByText("Pending verification")).toBeInTheDocument();
     expect(header.querySelector("img")).toHaveAttribute("src", "/api/v1/public/profile-photos/tok-1");
+    // The top bar's account menu shows the same photo.
+    expect(screen.getByRole("button", { name: "Account menu" }).querySelector("img")).toHaveAttribute("src", "/api/v1/public/profile-photos/tok-1");
   });
 
   it("edits in place: Cancel restores the saved values and sends nothing; Save sends only what changed", async () => {
     const calls = mockApi({
+      ...PAGE,
       "GET /api/v1/auth/account/profile": [ok(profile())],
       "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)],
       "PATCH /api/v1/auth/account/profile": [ok(profile({ name: "Ravi Kumar", country: "IN", language: "hi", time_zone: "Asia/Kolkata" }))],
@@ -366,6 +425,7 @@ describe("My Profile", () => {
 
   it("says what the server refused, marks the field and stays in edit mode", async () => {
     mockApi({
+      ...PAGE,
       "GET /api/v1/auth/account/profile": [ok(profile())],
       "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)],
       "PATCH /api/v1/auth/account/profile": [
@@ -387,6 +447,7 @@ describe("My Profile", () => {
     const scale = vi.spyOn(photoScaler, "scale").mockResolvedValue({ blob, preview: "data:image/webp;base64,AQID" });
     const withPhoto = profile({ photo_url: "/api/v1/public/profile-photos/tok-1" });
     const calls = mockApi({
+      ...PAGE,
       "GET /api/v1/auth/account/profile": [ok(profile())],
       "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)],
       "PUT /api/v1/auth/account/profile/photo": [ok(withPhoto)],

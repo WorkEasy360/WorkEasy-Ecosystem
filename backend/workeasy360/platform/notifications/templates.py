@@ -301,6 +301,28 @@ ACCOUNT_PASSWORD_CHANGED: Final = register(
     )
 )
 
+# 2026-11-27 (Accounts V2/V3 8.2: notify the verified contact after a sensitive
+# change): a password changed by a signed-in person, as the reset above is told.
+ACCOUNT_PASSWORD_CHANGED_SIGNED_IN: Final = register(
+    Template(
+        key="platform.account.password_changed_signed_in",
+        subject="Your WorkEasy360 password was changed",
+        body_text=(
+            "The password for your WorkEasy360 account was changed from {device}. "
+            "Every other signed-in session, and every product you were signed in "
+            "to, was signed out.\n\n"
+            "If this was not you, reset your password now and contact "
+            "{support_email}."
+        ),
+        required=("device", "support_email"),
+        description="Sent after a signed-in person changes their password.",
+        samples=(
+            ("device", "Chrome on Windows"),
+            ("support_email", "support@example.com"),
+        ),
+    )
+)
+
 # --- ADR-066: changing the sign-in email ----------------------------------
 #
 # The confirmation link is a one-time credential, so it is sealed like the

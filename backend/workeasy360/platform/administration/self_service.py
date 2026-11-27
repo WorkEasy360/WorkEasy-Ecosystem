@@ -460,10 +460,19 @@ def request_email_change(
     portal: str | None = None,
     ip_prefix: str = "",
     device_label: str = "",
+    code: Any = None,
 ) -> str:
     """Ask to sign in with another address from now on. Nothing changes until
     the link mailed to that address is used (:func:`confirm_email_change`): the
     link proves the new mailbox, the password proves the person asking.
+
+    With two-step verification on, the person also gives a current code (or an
+    unused recovery code), as closing the account and turning two-step off
+    already require (Accounts V2/V3 8.2: "reauthenticate" before a sensitive
+    identifier change - 2026-11-27 alignment audit). Otherwise a stolen session
+    plus a known password could move the sign-in email, and with it the reset
+    route. A wrong code raises ``TwoStepCodeInvalid``; the view spends the
+    account's day budget for wrong codes, as closure does.
 
     One answer whatever the address: when another account already holds it,
     that address is told instead (as signup does), so this is no registration
@@ -471,8 +480,12 @@ def request_email_change(
     sign-in lockout, like the password change. Returns the outcome for metrics
     and tests only.
     """
-    from workeasy360.contracts.errors import CurrentPasswordIncorrect, EmailChangeInvalid
-    from workeasy360.platform.identity import lifecycle, tokens
+    from workeasy360.contracts.errors import (
+        CurrentPasswordIncorrect,
+        EmailChangeInvalid,
+        TwoStepCodeInvalid,
+    )
+    from workeasy360.platform.identity import lifecycle, tokens, two_step
     from workeasy360.platform.identity.account import record_account_event
     from workeasy360.platform.identity.models import AccountEvent, AccountToken, User
     from workeasy360.platform.identity.services import _record_failure
@@ -494,6 +507,11 @@ def request_email_change(
         raise EmailChangeInvalid("That is already your sign-in email.", field="new_email")
 
     with transaction.atomic():
+        # The code is spent in the same transaction as the request, so a refused
+        # request (raised below) never leaves a code half-used.
+        if two_step.is_enabled(user.pk) and two_step.verify_code(user.pk, code) is None:
+            metrics.increment("identity_two_step_code_failures_total", stage="email_change")
+            raise TwoStepCodeInvalid()
         holder = lifecycle.lock_by_email(address)
         if holder is not None:
             hour = timezone.now().strftime("%Y%m%d%H")

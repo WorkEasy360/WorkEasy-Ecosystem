@@ -1,0 +1,461 @@
+/* My Profile's overview (ProfileOverview.tsx, the owner's reference image "User
+   Account Dashboard"). Tokens only. */
+
+.greeting h1 {
+  margin: 0 0 6px;
+  font-size: clamp(26px, 2.6vw, 38px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--w360-text);
+  overflow-wrap: anywhere;
+}
+
+.greeting p {
+  margin: 0;
+  font-size: 17px;
+  color: var(--w360-text-muted);
+}
+
+.muted {
+  color: var(--w360-text-muted);
+}
+
+.mono {
+  font-family: var(--w360-font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+}
+
+/* --- the person's card ----------------------------------------------------- */
+
+.hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 20px 28px;
+  padding: 24px 28px;
+  border: 1px solid var(--w360-border);
+  border-radius: 18px;
+  background:
+    radial-gradient(40rem 14rem at 100% 100%, color-mix(in srgb, var(--w360-cta) 16%, transparent), transparent 70%),
+    linear-gradient(120deg, var(--w360-admin-accent-soft), var(--w360-surface) 60%);
+  box-shadow: var(--w360-shadow-md);
+}
+
+.photoWrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+}
+
+/* The photo or the initials, drawn large here (ProfilePicture's own classes are 72px). */
+.photoWrap > img,
+.photoWrap > span {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 4px solid var(--w360-surface);
+  box-shadow: var(--w360-shadow-md);
+  font-size: 36px;
+  object-fit: cover;
+}
+
+.photoButton {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--w360-surface);
+  border-radius: 50%;
+  background: var(--w360-shell);
+  color: var(--w360-shell-text);
+  cursor: pointer;
+}
+
+.photoButton:focus-visible,
+.editButton:focus-visible,
+.cardLink:focus-visible,
+.rowLink:focus-visible,
+.viewAll:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.who {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: clamp(22px, 2vw, 30px);
+  font-weight: 800;
+  color: var(--w360-text);
+  overflow-wrap: anywhere;
+}
+
+.email {
+  margin: 0;
+  font-size: 17px;
+  color: var(--w360-text);
+  overflow-wrap: anywhere;
+}
+
+.idRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(96px, auto));
+  margin: 0;
+  border-left: 1px solid var(--w360-border);
+}
+
+.facts > div {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 6px;
+  padding: 4px 18px;
+  text-align: center;
+  color: var(--w360-text);
+}
+
+.facts > div + div {
+  border-left: 1px solid var(--w360-border);
+}
+
+.facts dd {
+  order: 1;
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.facts dt {
+  order: 2;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.editButton {
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border: 1.5px solid var(--w360-border-strong, var(--w360-border));
+  border-radius: 12px;
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.editButton:hover {
+  background: var(--w360-admin-accent-soft);
+}
+
+/* --- the four sections as cards ---------------------------------------------- */
+
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.card {
+  --tile: var(--w360-tile-green);
+  --tile-bg: var(--w360-tile-green-bg);
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 20px 52px 20px 20px;
+  border: 1px solid var(--w360-border);
+  border-radius: 16px;
+  background: linear-gradient(160deg, var(--tile-bg), var(--w360-surface) 70%);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.card[data-tone="blue"] {
+  --tile: var(--w360-tile-blue);
+  --tile-bg: var(--w360-tile-blue-bg);
+}
+
+.card[data-tone="purple"] {
+  --tile: var(--w360-tile-purple);
+  --tile-bg: var(--w360-tile-purple-bg);
+}
+
+.card[data-tone="orange"] {
+  --tile: var(--w360-tile-orange);
+  --tile-bg: var(--w360-tile-orange-bg);
+}
+
+.card:hover {
+  box-shadow: var(--w360-shadow-md);
+}
+
+.cardIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--tile-bg);
+  color: var(--tile);
+}
+
+/* The whole card is the link's target; the name is the link. */
+.cardLink {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--w360-text);
+  text-decoration: none;
+}
+
+.cardLink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+}
+
+.card p {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.chevron {
+  position: absolute;
+  right: 16px;
+  bottom: 20px;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--w360-border);
+  background: var(--w360-surface);
+  color: var(--tile);
+}
+
+/* --- security at a glance, and recent activity ---------------------------------- */
+
+.twoUp {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 18px;
+}
+
+.panel {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid var(--w360-border);
+  border-radius: 16px;
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.panelHead h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--w360-text);
+}
+
+.panelHead h2 svg {
+  color: var(--w360-admin-action);
+}
+
+.viewAll {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--w360-admin-action);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.viewAll:hover {
+  text-decoration: underline;
+}
+
+.rows,
+.activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.rows li {
+  display: grid;
+  grid-template-columns: auto minmax(7rem, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 1px solid var(--w360-border);
+  border-radius: 12px;
+  color: var(--w360-text);
+}
+
+.rowLabel {
+  font-weight: 700;
+}
+
+.rowValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rowLink {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--w360-text);
+}
+
+.rowLink:hover {
+  background: var(--w360-admin-accent-soft);
+}
+
+.activity li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 1px solid var(--w360-border);
+  border-radius: 12px;
+  color: var(--w360-text);
+}
+
+.activity time {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/* --- narrower windows and phones ---------------------------------------------------- */
+
+@media (max-width: 1200px) {
+  .hero {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .facts {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--w360-border);
+    padding-top: 14px;
+    justify-content: start;
+  }
+
+  .editButton {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .twoUp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+    padding: 18px 16px;
+  }
+
+  .editButton {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .photoWrap,
+  .photoWrap > img,
+  .photoWrap > span {
+    width: 96px;
+    height: 96px;
+  }
+
+  .facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .facts > div {
+    padding: 4px 6px;
+  }
+
+  .cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rows li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .rows li .rowValue {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+
+  .activity li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .activity time {
+    grid-column: 2;
+  }
+}

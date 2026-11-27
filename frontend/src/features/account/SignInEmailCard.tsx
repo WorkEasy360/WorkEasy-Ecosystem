@@ -19,7 +19,18 @@ export const NO_MOBILE_SIGN_IN = "Sign-in with a mobile number is not available.
  * and Cancel - the old address keeps working throughout), and the existing confirmed
  * change (ADR-066).
  */
-export function SignInEmailCard({ email, verified, onChanged }: { email: string; verified: boolean; onChanged?: () => void }) {
+export function SignInEmailCard({
+  email,
+  verified,
+  twoStep = false,
+  onChanged,
+}: {
+  email: string;
+  verified: boolean;
+  /** Two-step verification is on: the change asks for a code too. */
+  twoStep?: boolean;
+  onChanged?: () => void;
+}) {
   const [pending, reload] = useLoad(() => accountApi.pendingEmail(), []);
   const [busy, setBusy] = useState<"resend" | "cancel" | null>(null);
   const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
@@ -64,6 +75,7 @@ export function SignInEmailCard({ email, verified, onChanged }: { email: string;
   return (
     <Panel title="Sign-in email" description="The address you sign in with, and where security notices are sent.">
       <ChangeEmailForm
+        twoStep={twoStep}
         currentEmail={email}
         status={verified ? <Badge tone="success">Verified</Badge> : <Badge tone="warning">Not verified</Badge>}
         onRequested={() => {

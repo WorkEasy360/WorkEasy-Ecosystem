@@ -44,6 +44,45 @@ describe("changing the sign-in email (ADR-066)", () => {
     fireEvent.click(within(popup).getByRole("button", { name: "Send confirmation link" }));
     expect(await within(popup).findByRole("alert")).toHaveTextContent("The current password is not correct.");
   });
+
+  it("with two-step verification on, asks for the code too and sends it (2026-11-27)", async () => {
+    const calls = mockApi({ "POST /api/v1/auth/email": [{ status: 202, body: { status: "confirmation_sent" } }] });
+    render(<ChangeEmailForm currentEmail="rahul@abccompany.com" twoStep />);
+    fireEvent.click(screen.getByRole("button", { name: "Change sign-in email" }));
+    const popup = screen.getByRole("dialog", { name: "Change sign-in email" });
+    fireEvent.change(within(popup).getByLabelText("New sign-in email"), { target: { value: "rahul.new@abccompany.com" } });
+    fireEvent.change(within(popup).getByLabelText("Current password"), { target: { value: "my passphrase" } });
+    const send = within(popup).getByRole("button", { name: "Send confirmation link" });
+    expect(send).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Two-step code"), { target: { value: " 123456 " } });
+    fireEvent.click(send);
+    expect(await screen.findByRole("status")).toHaveTextContent("We sent a confirmation link to rahul.new@abccompany.com");
+    expect(calls[0].body).toEqual({ new_email: "rahul.new@abccompany.com", password: "my passphrase", code: "123456" });
+  });
+
+  it("when the caller did not know two-step is on, the server's refusal brings the code field", async () => {
+    const calls = mockApi({
+      "POST /api/v1/auth/email": [
+        { status: 400, body: { code: "two_step_code_invalid", field: "code" } },
+        { status: 202, body: { status: "confirmation_sent" } },
+      ],
+    });
+    render(<ChangeEmailForm currentEmail="rahul@abccompany.com" />);
+    fireEvent.click(screen.getByRole("button", { name: "Change sign-in email" }));
+    const popup = screen.getByRole("dialog", { name: "Change sign-in email" });
+    expect(within(popup).queryByLabelText("Two-step code")).not.toBeInTheDocument();
+    fireEvent.change(within(popup).getByLabelText("New sign-in email"), { target: { value: "x@abccompany.com" } });
+    fireEvent.change(within(popup).getByLabelText("Current password"), { target: { value: "my passphrase" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Send confirmation link" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("Two-step verification is on");
+    fireEvent.change(within(popup).getByLabelText("Two-step code"), { target: { value: "654321" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Send confirmation link" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("We sent a confirmation link to x@abccompany.com");
+    expect(calls.map((c) => c.body)).toEqual([
+      { new_email: "x@abccompany.com", password: "my passphrase" },
+      { new_email: "x@abccompany.com", password: "my passphrase", code: "654321" },
+    ]);
+  });
 });
 
 describe("the emailed confirmation link (ADR-066)", () => {

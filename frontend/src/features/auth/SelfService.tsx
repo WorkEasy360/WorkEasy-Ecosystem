@@ -13,6 +13,7 @@ import styles from "@/features/site/Site.module.css";
 import { AdminAuthFrame } from "./AdminLogin";
 import { PARTNER_SIGN_IN, PartnerAuthFrame } from "./PartnerLogin";
 import { UserAuthFrame } from "./UserLogin";
+import { AccountsAuthFrame, ModeSwitch } from "./AccountsLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { usePortals } from "@/lib/portalContext";
 import { portalForHost, portalSignInPath, storeSignsInThroughAccounts, type PortalOrigins } from "@/lib/portals";
@@ -115,7 +116,7 @@ function Field({
 
 // --- sign up -------------------------------------------------------------------------------
 
-export function SignupScreen() {
+export function SignupScreen({ accounts = false, accountsHost }: { accounts?: boolean; accountsHost?: string } = {}) {
   const params = useSearchParams();
   const [sent, setSent] = useState(false);
 
@@ -150,13 +151,26 @@ export function SignupScreen() {
     if (back) rememberStoreReturn(back);
   }, [params]);
 
+  // 2026-11-27 (Accounts V2/V3 5.1): sign-up creates one personal account; an
+  // organization only when the person names one. An invitee joins through the
+  // invitation link instead, so the page says so rather than "Create
+  // Organization Account".
+  const description = sent
+    ? undefined
+    : "One personal account for every WorkEasy360 product. Invited by a team? Open the link in your invitation instead.";
+  if (accounts) {
+    // WorkEasy360 Accounts' own frame, the Sign Up half of its Log In / Sign Up card.
+    return (
+      <AccountsAuthFrame title={sent ? "Check your email" : "Create WorkEasy360 Account"} description={description} accountsHost={accountsHost}>
+        {!sent && <ModeSwitch current="signup" />}
+        <SignupForm onSent={() => setSent(true)} signInHref="/login" />
+      </AccountsAuthFrame>
+    );
+  }
   return (
     // 2026-11-11: the customer portal's own frame, as its sign-in ("Create
     // Organization Account" there leads here).
-    <UserAuthFrame
-      title={sent ? "Check your email" : "Create Organization Account"}
-      description={sent ? undefined : "Create your WorkEasy360 account. Your organization is set up when you confirm your email."}
-    >
+    <UserAuthFrame title={sent ? "Check your email" : "Create WorkEasy360 Account"} description={description}>
       <SignupForm onSent={() => setSent(true)} signInHref="/login" />
     </UserAuthFrame>
   );
@@ -224,7 +238,7 @@ export function SignupForm({ onSent, signInHref }: { onSent?: () => void; signIn
             maxLength={150}
             value={form.company_name}
             onChange={set("company_name")}
-            hint="We create your organization with this name once you confirm your email."
+            hint="Only if you want to set up a new organization: we create it with this name once you confirm your email. Leave it empty to create just your personal account."
           />
           <Problems id={errorId} problems={problems} />
           <button type="submit" className={`w360-btn w360-btn-primary ${styles.fullWidth}`} disabled={busy}>

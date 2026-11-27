@@ -32,7 +32,9 @@ PATCH takes any subset of `full_name`, `country` (ISO 3166-1 alpha-2), `language
 
 ## 2. Login & Security (every web host, like the existing `auth/password`, `auth/email`)
 
-### Sign-in email change (existing `POST auth/email {new_email, password}` unchanged)
+### Sign-in email change (`POST auth/email {new_email, password, code?}`)
+
+2026-11-27 (ADR-077): for an account with two-step on, `code` (an authenticator code or an unused recovery code) is required. Without it, or with a wrong one, the answer is 400 `two_step_code_invalid` (field `code`). A wrong code spends the two-step day budget (429 once spent) and counts toward the hourly notice, as closure does. Accounts without two-step: unchanged.
 
 - `GET auth/email/pending` -> `{"pending": {"new_email","requested_at","expires_at"} | null}`
 - `POST auth/email/pending/resend` -> 202 `{"pending": {...}}`; 429 when throttled; 404 `no_pending_email_change`.

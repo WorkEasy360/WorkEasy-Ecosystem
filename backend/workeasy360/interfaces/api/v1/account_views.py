@@ -86,6 +86,9 @@ def password_view(request: HttpRequest) -> JsonResponse:
     update_session_auth_hash(request, changed)
     request.session[SESSION_EPOCH_KEY] = changed.session_epoch
     request.session[SESSION_PASSWORD_NONCOMPLIANT_KEY] = []
+    from workeasy360.platform.administration import account_security
+
+    account_security.password_changed_notice(changed, device_label=where["device_label"])
     return JsonResponse({"ok": True})
 
 
@@ -93,10 +96,16 @@ def password_view(request: HttpRequest) -> JsonResponse:
 @never_cache
 def email_change_view(request: HttpRequest) -> JsonResponse:
     """Ask to sign in with another email (ADR-066). Needs the current
-    password; the confirmation link goes to the new address, and nothing
-    changes until it is used. Answers 202 whatever the address (an address
-    another account holds is told instead - ``self_service``)."""
-    from workeasy360.platform.administration import self_service
+    password - and, with two-step verification on, a current code (2026-11-27;
+    ``code`` in the body) - the confirmation link goes to the new address, and
+    nothing changes until it is used. Answers 202 whatever the address (an
+    address another account holds is told instead - ``self_service``)."""
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+    from workeasy360.interfaces.api.v1.control_plane_http import (
+        failures_exhausted,
+        spend_failure,
+    )
+    from workeasy360.platform.administration import account_security, self_service
     from workeasy360.platform.identity import portals as portal_links
 
     user = _user(request)
@@ -107,15 +116,31 @@ def email_change_view(request: HttpRequest) -> JsonResponse:
     )
     if blocked is not None:
         return blocked
+    # A wrong code here spends the account changes' day budget for wrong codes,
+    # with their hourly notice (ADR-075 review L1 / L-1, as closure does).
+    blocked = failures_exhausted("two_step_daily", user=user)
+    if blocked is not None:
+        return blocked
     where = connection_facts(request)
-    self_service.request_email_change(
-        user.id,
-        password=str(body.get("password") or ""),
-        new_email=new_email,
-        portal=portal_links.request_portal(request),
-        ip_prefix=where["ip_prefix"],
-        device_label=where["device_label"],
-    )
+    try:
+        self_service.request_email_change(
+            user.id,
+            password=str(body.get("password") or ""),
+            new_email=new_email,
+            portal=portal_links.request_portal(request),
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+            code=body.get("code"),
+        )
+    except TwoStepCodeInvalid:
+        spend_failure("two_step_daily", user=user)
+        account_security.two_step_code_refused(
+            user,
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+            at_sign_in=False,
+        )
+        raise
     return JsonResponse({"status": "confirmation_sent"}, status=202)
 
 
