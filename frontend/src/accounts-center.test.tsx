@@ -12,7 +12,8 @@ import {
   productSignOutMessage,
   sessionLabel,
 } from "@/features/account/centerCopy";
-import { CenterDevices, CenterLoginSecurity, CenterProfile, CenterSettings } from "@/features/account/AccountsCenter";
+import { CenterDevices, CenterHome, CenterLoginSecurity, CenterProfile, CenterSettings, EDIT_PROFILE_HREF } from "@/features/account/AccountsCenter";
+import { ASSISTANT_TOPICS, hasUnseen } from "@/features/account/TopbarMenus";
 import { ConnectedLogins } from "@/features/account/ConnectedLogins";
 import { ActiveSessions, LoginHistory } from "@/features/account/CenterSessions";
 import { photoScaler } from "@/features/account/ProfileForm";
@@ -141,9 +142,10 @@ describe("routing", () => {
     expect(centerOrigins({ ...ENV, W360_ACCOUNTS_IDENTITY: "on" })).toEqual({ appOrigin: BASE.app });
   });
 
-  it("has exactly four sections, My Profile first; each is an Accounts page that signs in on Accounts", () => {
+  it("has Home first, then the four sections; each is an Accounts page that signs in on Accounts", () => {
     expect(CENTER_SECTIONS.map((s) => [s.label, s.href])).toEqual([
-      ["My Profile", "/account"],
+      ["Home", "/account"],
+      ["My Profile", "/account/profile"],
       ["Login & Security", "/account/security"],
       ["Devices & Sessions", "/account/sessions"],
       ["Settings", "/account/settings"],
@@ -308,27 +310,29 @@ describe("My Profile", () => {
     ],
   };
 
-  it("opens first: a greeting, photo or initials, name, verified email and WorkEasy360 ID; four menus only; Help & Support; passes axe", async () => {
+  it("Home opens first: a greeting, photo or initials, name, verified email, mobile not added; Home and four menus; passes axe", async () => {
     mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile({ name: "Ravi Kumar", time_zone: "Asia/Kolkata", country: "IN", language: "en" }))] });
-    const { container } = render(<CenterProfile />);
+    const { container } = render(<CenterHome />);
     expect(await screen.findByRole("heading", { level: 1, name: /^Good (morning|afternoon|evening), Ravi!$/ })).toBeInTheDocument();
-    expect(await screen.findByText(USER_ID)).toBeInTheDocument();
     const header = screen.getByRole("region", { name: "Your WorkEasy360 account" });
     expect(within(header).getByText("Ravi Kumar")).toBeInTheDocument();
     expect(within(header).getByText("ravi@example.com")).toBeInTheDocument();
-    expect(within(header).getByText("Verified email")).toBeInTheDocument();
+    expect(within(header).getByText("Verified Email")).toBeInTheDocument();
     expect(within(header).getByText("RK")).toBeInTheDocument();
     expect(within(header).getByText("India")).toBeInTheDocument();
     expect(within(header).getByText("Asia / Kolkata")).toBeInTheDocument();
-    // Exactly four menus, My Profile current - the reference's "Home" is not a fifth.
+    // No phone number is stored and none is verified: the mobile row says so.
+    expect(within(header).getByText(/Mobile: Not added/)).toBeInTheDocument();
+    expect(within(header).queryByText(USER_ID)).not.toBeInTheDocument();
+    // Home, then the four menus; Home current.
     const nav = screen.getByRole("navigation", { name: "Your account" });
-    expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual(["My Profile", "Login & Security", "Devices & Sessions", "Settings"]);
-    expect(within(nav).getByRole("link", { name: "My Profile" })).toHaveAttribute("aria-current", "page");
-    expect(container.textContent).not.toMatch(/My Products|Connected Logins|Wallet|Product Catalog|AI Assistant|Mobile/);
+    expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual(["Home", "My Profile", "Login & Security", "Devices & Sessions", "Settings"]);
+    expect(within(nav).getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
+    expect(container.textContent).not.toMatch(/My Products|Connected Logins|Wallet|Product Catalog/);
     // The four sections as cards, each opening its page.
     const cards = screen.getByRole("list", { name: "Your account's sections" });
     expect(within(cards).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
-      "#profile-details",
+      "/account/profile",
       "/account/security",
       "/account/sessions",
       "/account/settings",
@@ -337,10 +341,12 @@ describe("My Profile", () => {
     const security = screen.getByRole("region", { name: "Account Security" });
     expect(within(security).getByText("Review your security")).toBeInTheDocument();
     expect(within(security).getByText("Off")).toBeInTheDocument();
-    expect(await within(security).findByText(/^Last changed /)).toBeInTheDocument();
+    expect(within(security).getByText("Not added")).toBeInTheDocument();
+    expect(within(security).queryByText(/^Verified$/, { selector: "span" })).toBeInTheDocument();
+    expect(await within(security).findByText(/^Last changed: /)).toBeInTheDocument();
     const activity = screen.getByRole("region", { name: "Recent Security Activity" });
     expect(await within(activity).findByText(/Chrome on Windows/)).toBeInTheDocument();
-    expect(within(activity).getByRole("link", { name: /View all/ })).toHaveAttribute("href", "/account/settings#security-activity");
+    expect(within(activity).getByRole("link", { name: /View All/ })).toHaveAttribute("href", "/account/settings#security-activity");
     // Help & Support: the top bar's icon, and the sidebar card's Get Support.
     expect(screen.getByRole("link", { name: "Help & Support" })).toHaveAttribute("href", "/help/account");
     expect(screen.getByRole("link", { name: /Get Support/ })).toHaveAttribute("href", "/help/account");
@@ -357,9 +363,64 @@ describe("My Profile", () => {
     await expectNoViolations(container);
   });
 
-  it("Edit Profile and the photo button open the details in edit mode", async () => {
+  it("Home's Edit Profile opens My Profile in edit mode", async () => {
+    mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile())] });
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, search: "" });
+    try {
+      render(<CenterHome />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Profile" }));
+      expect(assign).toHaveBeenCalledWith(EDIT_PROFILE_HREF);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(EDIT_PROFILE_HREF).toBe("/account/profile?edit=1");
+  });
+
+  it("the AI Assistant answers from guided topics, each linking to the page that does it", async () => {
+    const calls = mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile())] });
+    const { container } = render(<CenterHome />);
+    const button = await screen.findByRole("button", { name: "AI Assistant" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "How do I turn on two-step verification?" }));
+    expect(screen.getByText(/Set up two-step verification/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open Login & Security/ })).toHaveAttribute("href", "/account/security");
+    fireEvent.click(screen.getByRole("button", { name: /Other questions/ }));
+    expect(screen.getAllByRole("button", { name: /\?$|password$/ }).length).toBeGreaterThanOrEqual(ASSISTANT_TOPICS.length - 1);
+    await expectNoViolations(container);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    // Every answer links to a page of this site; nothing is sent anywhere.
+    for (const t of ASSISTANT_TOPICS) expect(t.href, t.q).toMatch(/^\/(account|forgot-password|help)/);
+    expect(calls.every((c) => c.key.startsWith("GET "))).toBe(true);
+  });
+
+  it("the bell lists recent security activity and marks what is new", async () => {
+    mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile())] });
+    render(<CenterHome />);
+    const bell = await screen.findByRole("button", { name: /^Security alerts/ });
+    fireEvent.click(bell);
+    const panel = screen.getByRole("region", { name: "Security alerts" });
+    expect(await within(panel).findByText(/Chrome on Windows/)).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: /View All/ })).toHaveAttribute("href", "/account/settings#security-activity");
+    const at = "2026-11-20T09:00:00Z";
+    const now = Date.parse("2026-11-21T09:00:00Z");
+    expect(hasUnseen([], null, now)).toBe(false);
+    expect(hasUnseen([{ occurred_at: at } as never], null, now)).toBe(true);
+    expect(hasUnseen([{ occurred_at: at } as never], null, Date.parse("2026-12-20T09:00:00Z"))).toBe(false);
+    expect(hasUnseen([{ occurred_at: at } as never], at, now)).toBe(false);
+    expect(hasUnseen([{ occurred_at: at } as never], "2026-11-19T00:00:00Z", now)).toBe(true);
+  });
+
+  it("My Profile: the WorkEasy360 ID, and Edit Profile and the photo button open the details in edit mode", async () => {
     mockApi({ ...PAGE, "GET /api/v1/auth/account/profile": [ok(profile())], "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)] });
     render(<CenterProfile />);
+    expect(await screen.findByText(USER_ID)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "My Profile" })).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Your account" });
+    expect(within(nav).getByRole("link", { name: "My Profile" })).toHaveAttribute("aria-current", "page");
     fireEvent.click(await screen.findByRole("button", { name: "Edit Profile" }));
     const card = screen.getByRole("region", { name: "Profile" });
     expect(await within(card).findByLabelText("Full name")).toHaveValue("Ravi");

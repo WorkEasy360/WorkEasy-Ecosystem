@@ -10,15 +10,14 @@ import { ProfilePicture, languageName, timeZoneLabel } from "./ProfileForm";
 import styles from "./AccountOverview.module.css";
 
 /**
- * My Profile's overview (2026-11-27, the owner's reference image "User Account
- * Dashboard"): a greeting, the person's card, the four sections as cards, their
- * account security at a glance and their recent security activity.
+ * Home's overview (2026-11-27, the owner's reference image "User Account
+ * Dashboard", to be matched exactly): a greeting, the person's card, the four
+ * sections as cards, their account security at a glance and their recent security
+ * activity.
  *
- * The reference's extras that WorkEasy360 Accounts does not have are left out
- * rather than drawn as if they worked: a mobile number (no SMS provider - V3 8.2
- * forbids implying phone sign-in), a notification bell (Accounts has no personal
- * notification feed) and an AI Assistant (organization-scoped, with AI Credits;
- * V3 10.3 keeps account security independent of it). Everything shown here is
+ * The reference's mobile number is drawn as "Not added": Accounts stores no phone
+ * number and has no SMS provider, so nothing may claim a verified phone or imply
+ * phone sign-in (V3 8.2; the owner's choice, 2026-11-27). Everything shown here is
  * read from the person's own account; every change still happens on its section's
  * page.
  */
@@ -46,18 +45,25 @@ export function Greeting({ profile }: { profile: AccountProfile }) {
     <div className={styles.greeting}>
       <h1>
         {greetingFor(new Date(), profile.time_zone || undefined)}
-        {name ? `, ${name}` : ""}!
+        {name ? `, ${name}` : ""}!{" "}
+        <span className={styles.wave} aria-hidden="true">
+          {"\u{1F44B}"}
+        </span>
       </h1>
       <p>This is your personal WorkEasy360 account.</p>
     </div>
   );
 }
 
-/** The person's card: photo, name, verified email, WorkEasy360 ID, and where they are. */
-export function ProfileSummary({ profile, onEdit }: { profile: AccountProfile; onEdit: () => void }) {
+/** The mobile row: Accounts has no phone number to show yet (see above). */
+export const MOBILE_NOT_ADDED = "Not added - coming soon";
+
+/** The person's card: photo, name, verified email, mobile, and where they are; on
+ * My Profile also the WorkEasy360 ID. */
+export function ProfileSummary({ profile, onEdit, showId = false }: { profile: AccountProfile; onEdit: () => void; showId?: boolean }) {
   const facts = [
     { icon: "globe", label: "Country", value: profile.country ? countryName(profile.country) : "Not set" },
-    { icon: "chat", label: "Language", value: profile.language ? languageName(profile.language) : "Not set" },
+    { icon: "translate", label: "Language", value: profile.language ? languageName(profile.language) : "Not set" },
     { icon: "clock", label: "Time Zone", value: profile.time_zone ? timeZoneLabel(profile.time_zone) : "Not set" },
   ];
   return (
@@ -72,7 +78,7 @@ export function ProfileSummary({ profile, onEdit }: { profile: AccountProfile; o
         <h2 className={styles.name}>{profile.name || "Name not set"}</h2>
         {profile.email_verified ? (
           <Badge tone="success" icon="checkCircle">
-            Verified email
+            Verified Email
           </Badge>
         ) : (
           <Badge tone="warning">Email not verified</Badge>
@@ -86,11 +92,17 @@ export function ProfileSummary({ profile, onEdit }: { profile: AccountProfile; o
             </span>
           </p>
         )}
-        <p className={styles.idRow}>
-          <span className={styles.muted}>WorkEasy360 ID</span>
-          <span className={styles.mono}>{profile.user_id}</span>
-          <CopyButton value={profile.user_id} label="Copy WorkEasy360 ID" />
+        <p className={styles.phoneRow}>
+          <Icon name="device" size={18} />
+          <span className={styles.muted}>Mobile: {MOBILE_NOT_ADDED}</span>
         </p>
+        {showId && (
+          <p className={styles.idRow}>
+            <span className={styles.muted}>WorkEasy360 ID</span>
+            <span className={styles.mono}>{profile.user_id}</span>
+            <CopyButton value={profile.user_id} label="Copy WorkEasy360 ID" />
+          </p>
+        )}
       </div>
       <dl className={styles.facts}>
         {facts.map((f) => (
@@ -109,8 +121,8 @@ export function ProfileSummary({ profile, onEdit }: { profile: AccountProfile; o
 }
 
 const SECTION_CARDS = [
-  { tone: "green", icon: "user", title: "My Profile", text: "View and update your personal details.", href: "#profile-details" },
-  { tone: "blue", icon: "shield", title: "Login & Security", text: "Manage your email, password and two-step verification.", href: "/account/security" },
+  { tone: "green", icon: "user", title: "My Profile", text: "View and update your personal details.", href: "/account/profile" },
+  { tone: "blue", icon: "shield", title: "Login & Security", text: "Manage login, password and two-step verification.", href: "/account/security" },
   { tone: "purple", icon: "monitor", title: "Devices & Sessions", text: "View active sessions and sign out from devices.", href: "/account/sessions" },
   { tone: "orange", icon: "settings", title: "Settings", text: "Notifications, security activity and preferences.", href: "/account/settings" },
 ] as const;
@@ -149,6 +161,8 @@ const ACTIVITY_ICON: Record<string, string> = {
   sign_in_failed: "alert",
   password_changed: "key", // pragma: allowlist secret
   password_reset: "key", // pragma: allowlist secret
+  two_step_enabled: "shield",
+  two_step_disabled: "shield",
   session_revoked: "logout",
   other_sessions_revoked: "logout",
   signed_out_everywhere: "logout",
@@ -167,19 +181,37 @@ function SecuritySummary({ profile, events }: { profile: AccountProfile; events:
         <h2 id="w360-account-security">
           <Icon name="shield" size={24} /> Account Security
         </h2>
-        {secure ? <Badge tone="success" icon="checkCircle">Secure account</Badge> : <Badge tone="warning">Review your security</Badge>}
+        {secure ? (
+          <Badge tone="success" icon="checkCircle">
+            Secure Account
+          </Badge>
+        ) : (
+          <Badge tone="warning">Review your security</Badge>
+        )}
       </header>
       <ul className={styles.rows}>
         <li>
           <Icon name="mail" size={20} />
           <span className={styles.rowLabel}>Email</span>
           <span className={styles.rowValue}>{profile.email}</span>
-          {profile.email_verified ? <Badge tone="success">Verified</Badge> : <Badge tone="warning">Not verified</Badge>}
+          {profile.email_verified ? (
+            <Badge tone="success" icon="checkCircle">
+              Verified
+            </Badge>
+          ) : (
+            <Badge tone="warning">Not verified</Badge>
+          )}
+        </li>
+        <li>
+          <Icon name="device" size={20} />
+          <span className={styles.rowLabel}>Mobile</span>
+          <span className={styles.rowValue}>Not added</span>
+          <Badge tone="neutral">Coming soon</Badge>
         </li>
         <li>
           <Icon name="lock" size={20} />
           <span className={styles.rowLabel}>Password</span>
-          <span className={styles.rowValue}>{changed ? `Last changed ${when(changed)}` : "Change it any time"}</span>
+          <span className={styles.rowValue}>{changed ? `Last changed: ${when(changed)}` : "Change it any time"}</span>
           <a href="/account/security" className={styles.rowLink} aria-label="Password - Login & Security">
             <Icon name="chevronRight" size={18} />
           </a>
@@ -188,7 +220,13 @@ function SecuritySummary({ profile, events }: { profile: AccountProfile; events:
           <Icon name="shield" size={20} />
           <span className={styles.rowLabel}>Two-Step Verification (2FA)</span>
           <span className={styles.rowValue} />
-          {profile.two_step_enabled ? <Badge tone="success">Enabled</Badge> : <Badge tone="warning">Off</Badge>}
+          {profile.two_step_enabled ? (
+            <Badge tone="success" icon="checkCircle">
+              Enabled
+            </Badge>
+          ) : (
+            <Badge tone="warning">Off</Badge>
+          )}
           <a href="/account/security" className={styles.rowLink} aria-label="Two-step verification - Login & Security">
             <Icon name="chevronRight" size={18} />
           </a>
@@ -233,7 +271,7 @@ export function SecurityOverview({ profile }: { profile: AccountProfile }) {
             <Icon name="clock" size={24} /> Recent Security Activity
           </h2>
           <a href="/account/settings#security-activity" className={styles.viewAll}>
-            View all <Icon name="chevronRight" size={16} />
+            View All <Icon name="arrowRight" size={16} />
           </a>
         </header>
         <LoadGate load={load} what="your recent activity">

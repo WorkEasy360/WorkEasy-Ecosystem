@@ -17,12 +17,18 @@ export function centerOrigins(env: Record<string, string | undefined> = process.
   return { appOrigin: origins.app };
 }
 
-/** The Control Center's sections, in the order its navigation shows them - exactly
- * four (Accounts V3, the note's section 04). Organizations, subscriptions and billing
- * are User Admin's and are linked from Settings; products' sign-ins are part of
- * Devices & Sessions. My Profile opens first. */
+/** The Control Center's navigation, in order: Home, then the four sections (Accounts
+ * V3, the note's section 04). Organizations, subscriptions and billing are User
+ * Admin's and are linked from Settings; products' sign-ins are part of Devices &
+ * Sessions.
+ *
+ * 2026-11-27 (the owner, on the reference image "User Account Dashboard": "it should
+ * look exactly like this after login"): Home opens first and carries the overview;
+ * My Profile is its own page. Home is the overview of the four sections, not a fifth
+ * section with settings of its own. */
 export const CENTER_SECTIONS = [
-  { key: "profile", label: "My Profile", href: "/account" },
+  { key: "home", label: "Home", href: "/account" },
+  { key: "profile", label: "My Profile", href: "/account/profile" },
   { key: "security", label: "Login & Security", href: "/account/security" },
   { key: "sessions", label: "Devices & Sessions", href: "/account/sessions" },
   { key: "settings", label: "Settings", href: "/account/settings" },

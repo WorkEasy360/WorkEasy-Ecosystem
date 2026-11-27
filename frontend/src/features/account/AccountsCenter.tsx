@@ -22,35 +22,61 @@ import { CloseAccount, HelpAndSupport, NotificationSettings, RecentSecurityActiv
  * a column of simple cards; everything organizational is a link to User Admin.
  */
 
+/** Where Home's "Edit Profile" goes: My Profile with its details open for editing. */
+export const EDIT_PROFILE_HREF = "/account/profile?edit=1";
+
 /**
- * My Profile: who you are - name, photo, verified email, WorkEasy360 ID - and the
- * details you can edit. Since 2026-11-27 it is laid out as the owner's reference
- * image "User Account Dashboard": a greeting, the person's card, the four sections
- * as cards, security at a glance and recent activity, then the editable details.
- * It stays My Profile - the first of exactly four menus - not a fifth "Home".
+ * Home (2026-11-27, the owner's reference image "User Account Dashboard"): the page
+ * that opens first - a greeting, the person's card, the four sections as cards,
+ * security at a glance and recent security activity. Read only: every change happens
+ * on its section's page.
+ */
+export function CenterHome() {
+  const [load] = useLoad(() => accountCenterApi.profile(), []);
+  const shown = load.status === "ready" ? load.data : null;
+  return (
+    <CenterShell current="home" person={shown}>
+      <LoadGate load={load} what="your account">
+        {(profile) => (
+          <>
+            <Greeting profile={profile} />
+            <ProfileSummary profile={profile} onEdit={() => window.location.assign(EDIT_PROFILE_HREF)} />
+            <SectionCards />
+            <SecurityOverview profile={profile} />
+          </>
+        )}
+      </LoadGate>
+    </CenterShell>
+  );
+}
+
+/**
+ * My Profile: who you are - photo, name, verified email, WorkEasy360 ID - and the
+ * details you can edit. Opened from Home's "Edit Profile" (`?edit=1`), the details
+ * open for editing.
  */
 export function CenterProfile() {
   const [load] = useLoad(() => accountCenterApi.profile(), []);
   // What the last save answered, until the page is opened again.
   const [saved, setSaved] = useState<AccountProfile | null>(null);
-  const [editing, setEditing] = useState(false);
+  // Home's "Edit Profile" opens this page with the details open (`?edit=1`). The
+  // details render only after the profile loads in the browser, so the server's
+  // first render never shows them either way.
+  const [editing, setEditing] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("edit") === "1");
   const shown = saved ?? (load.status === "ready" ? load.data : null);
   const edit = () => {
     setEditing(true);
-    // The details card sits below the overview: bring it into view.
+    // The details card sits below the person's card: bring it into view.
     requestAnimationFrame(() => document.getElementById("profile-details")?.scrollIntoView?.({ behavior: "smooth", block: "start" }));
   };
   return (
-    <CenterShell current="profile" person={shown}>
+    <CenterShell current="profile" title="My Profile" lead="Your photo, name and the details products show." person={shown}>
       <LoadGate load={load} what="your profile">
         {(data) => {
           const profile = saved ?? data;
           return (
             <>
-              <Greeting profile={profile} />
-              <ProfileSummary profile={profile} onEdit={edit} />
-              <SectionCards />
-              <SecurityOverview profile={profile} />
+              <ProfileSummary profile={profile} onEdit={edit} showId />
               <div id="profile-details" className={styles.anchor}>
                 <ProfileCard profile={profile} onSaved={setSaved} editing={editing} onEditingChange={setEditing} />
               </div>

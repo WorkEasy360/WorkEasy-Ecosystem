@@ -56,3 +56,13 @@ The two reference images ask for a split-screen Accounts login and a dashboard-s
   - the inert `product_news` toggle;
   - the publish gate for an awaiting automatic setup;
   - product-side back-channel receivers and `backchannel_logout_uri` in the seed manifests.
+
+## Amendment (2026-11-27, later): the landing matches the reference exactly
+
+The owner asked for the signed-in page to look exactly like the reference image, and chose how its extras behave. This replaces the "Home is not added" and "Not drawn" points above:
+
+- **Home** is the first menu and the page `/account` opens. It carries the overview: greeting, the person's card, the four sections as cards, Account Security and Recent Security Activity. **My Profile** moves to `/account/profile`, with the WorkEasy360 ID and the editable details. Home's "Edit Profile" opens `/account/profile?edit=1`. Home is an overview of the four sections, not a fifth section with settings of its own.
+- **AI Assistant** (top bar): guided answers to common account questions, each linking to the page that does it (`TopbarMenus.tsx`, `ASSISTANT_TOPICS`). No AI model is called, and nothing leaves the page. A real assistant can replace the answers later.
+- **The bell**: this account's own recent security activity (`/api/v1/auth/activity`, the same feed as Settings). The dot marks activity newer than the last time the bell was opened in this browser (localStorage, wrapped in try/catch). Without storage, it marks activity of the last seven days.
+- **Mobile**: shown as "Not added - coming soon" on the card and in Account Security. No phone number is stored and nothing claims one is verified (V3 8.2 still holds).
+- No backend or schema change.

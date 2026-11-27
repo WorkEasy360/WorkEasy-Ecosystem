@@ -7,23 +7,25 @@ import { logout, switchAccount } from "@/lib/api/auth";
 import { useSession } from "@/lib/auth/useSession";
 import { initialsOf } from "@/features/controlplane/kit";
 import { ACCOUNT_HELP_HREF, CENTER_SECTIONS, type CenterSection } from "./centerConfig";
+import { AlertsMenu, AssistantMenu } from "./TopbarMenus";
 import styles from "./AccountShell.module.css";
 
 /**
  * The Accounts Control Center (ADR-072; Accounts V3): one person's WorkEasy360 account
- * on WorkEasy360 Accounts, in exactly four sections - My Profile, Login & Security,
+ * on WorkEasy360 Accounts: Home, then four sections - My Profile, Login & Security,
  * Devices & Sessions and Settings. Organization administration (members, seats,
  * subscriptions, billing) stays on User Admin and buying in the Store; Settings links
  * there. Every page carries Help & Support.
  *
- * 2026-11-27 (the owner's reference image "User Account Dashboard"): the deep green
- * sidebar with the "User Account" pill and the Help & Support card, and a light top
- * bar with Help and the account menu (Switch account, Sign out). The reference's
- * "Home" entry is not a fifth menu: My Profile is the page that opens first and
- * carries the overview (V3 section 04 allows exactly four menus).
+ * 2026-11-27 (the owner's reference image "User Account Dashboard", to be matched
+ * exactly): the deep green sidebar with the "User Account" pill, Home and the four
+ * menus, and the Help & Support card; a light top bar with the AI Assistant (guided
+ * answers), the bell (security alerts), Help, and the account menu (Switch account,
+ * Sign out).
  */
 
 const SECTION_ICONS: Record<CenterSection, string> = {
+  home: "home",
   profile: "user",
   security: "shield",
   sessions: "monitor",
@@ -188,15 +190,17 @@ export function CenterShell({
           </span>
           <div>
             <h2 id={helpId}>Help &amp; Support</h2>
-            <p>Can&apos;t sign in, lost your authenticator, or think someone else is using your account?</p>
+            <p>Get help, guides and contact our team.</p>
           </div>
           <a href={ACCOUNT_HELP_HREF} className={styles.helpLink}>
-            Get Support <Icon name="chevronRight" size={18} />
+            Get Support <Icon name="arrowRight" size={18} />
           </a>
         </section>
       </aside>
       <div className={styles.content}>
         <header className={styles.topbar}>
+          <AssistantMenu />
+          <AlertsMenu />
           <a href={ACCOUNT_HELP_HREF} className={styles.iconLink} aria-label="Help & Support" title="Help & Support">
             <Icon name="help" size={24} />
           </a>

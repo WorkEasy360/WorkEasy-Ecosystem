@@ -115,6 +115,20 @@
   overflow-wrap: anywhere;
 }
 
+.phoneRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  color: var(--w360-text);
+}
+
+.wave {
+  display: inline-block;
+  font-weight: 400;
+}
+
 .idRow {
   display: flex;
   flex-wrap: wrap;
