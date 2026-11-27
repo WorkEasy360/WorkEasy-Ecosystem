@@ -147,8 +147,8 @@ export function lastPasswordChange(events: AccountEvent[]): string | null {
 const ACTIVITY_ICON: Record<string, string> = {
   sign_in: "monitor",
   sign_in_failed: "alert",
-  password_changed: "key",
-  password_reset: "key",
+  password_changed: "key", // pragma: allowlist secret
+  password_reset: "key", // pragma: allowlist secret
   session_revoked: "logout",
   other_sessions_revoked: "logout",
   signed_out_everywhere: "logout",

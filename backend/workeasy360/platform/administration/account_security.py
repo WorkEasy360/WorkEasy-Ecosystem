@@ -42,7 +42,7 @@ TWO_STEP_CHANGED_TEMPLATE = "platform.account.two_step_changed"
 ACCOUNT_CLOSED_TEMPLATE = "platform.account.closed"
 NEW_SIGN_IN_TEMPLATE = "platform.account.new_sign_in"
 SUPPORT_RECEIVED_TEMPLATE = "platform.account.support_received"
-PASSWORD_CHANGED_SIGNED_IN_TEMPLATE = "platform.account.password_changed_signed_in"
+PASSWORD_CHANGED_SIGNED_IN_TEMPLATE = "platform.account.password_changed_signed_in"  # noqa: S105 - a template key  # pragma: allowlist secret
 
 #: A device + network pair seen in a successful sign-in this recently is not new.
 NEW_DEVICE_LOOKBACK = timedelta(days=90)

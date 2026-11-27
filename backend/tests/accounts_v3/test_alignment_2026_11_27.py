@@ -31,7 +31,9 @@ NEW_PASSWORD = "an entirely different passphrase 2026"  # pragma: allowlist secr
 
 @pytest.fixture
 def member(with_password, user_factory):
-    return with_password(user_factory(email="align.member@example.com", full_name="Asha Rao"))
+    return with_password(
+        user_factory(email="align.member@example.com", full_name="Asha Rao")
+    )
 
 
 def _signed_in(user) -> Client:
@@ -54,7 +56,9 @@ def _pending_changes(user) -> int:
 
 def test_without_two_step_an_email_change_still_needs_only_the_password(member):
     browser = _signed_in(member)
-    asked = post(browser, EMAIL, {"new_email": "asha.new@example.com", "password": PASSWORD})
+    asked = post(
+        browser, EMAIL, {"new_email": "asha.new@example.com", "password": PASSWORD}
+    )
     assert asked.status_code == 202, asked.content
     assert _pending_changes(member) == 1
 
@@ -95,7 +99,11 @@ def test_the_password_is_still_checked_first_and_counted(member, enroll):
     wrong = post(
         browser,
         EMAIL,
-        {"new_email": "asha.new@example.com", "password": "not it", "code": next_code(raw)},
+        {
+            "new_email": "asha.new@example.com",
+            "password": "not it",  # pragma: allowlist secret
+            "code": next_code(raw),
+        },
     )
     assert wrong.json()["code"] == "current_password_incorrect"
     member.refresh_from_db()
@@ -134,7 +142,9 @@ def test_a_signed_in_password_change_tells_the_verified_address(member):
         {"current_password": PASSWORD, "new_password": NEW_PASSWORD},
     )
     assert changed.status_code == 200, changed.content
-    notices = [m for m in delivered() if m.subject == "Your WorkEasy360 password was changed"]
+    notices = [
+        m for m in delivered() if m.subject == "Your WorkEasy360 password was changed"
+    ]
     assert [m.to for m in notices] == [["align.member@example.com"]]
     assert "signed out" in notices[0].body
     assert NEW_PASSWORD not in notices[0].body and PASSWORD not in notices[0].body
@@ -144,7 +154,12 @@ def test_a_refused_password_change_sends_no_notice(member):
     browser = _signed_in(member)
     delivered()
     refused = post(
-        browser, PASSWORD_URL, {"current_password": "not it", "new_password": NEW_PASSWORD}
+        browser,
+        PASSWORD_URL,
+        {
+            "current_password": "not it",  # pragma: allowlist secret
+            "new_password": NEW_PASSWORD,
+        },
     )
     assert refused.status_code == 400
     assert not [m for m in delivered() if "password was changed" in m.subject]

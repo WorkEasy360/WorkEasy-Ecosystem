@@ -510,7 +510,9 @@ def request_email_change(
         # The code is spent in the same transaction as the request, so a refused
         # request (raised below) never leaves a code half-used.
         if two_step.is_enabled(user.pk) and two_step.verify_code(user.pk, code) is None:
-            metrics.increment("identity_two_step_code_failures_total", stage="email_change")
+            metrics.increment(
+                "identity_two_step_code_failures_total", stage="email_change"
+            )
             raise TwoStepCodeInvalid()
         holder = lifecycle.lock_by_email(address)
         if holder is not None:
