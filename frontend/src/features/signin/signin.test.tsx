@@ -147,6 +147,23 @@ describe("the access chooser", () => {
     expect(calls.at(-1)?.body).toEqual({ resume: "tok123", choice: "switch_account", remember: false });
   });
 
+  it("Log in to another account forgets what the previous person left in this browser (V3 7.1)", async () => {
+    query = "resume=tok123";
+    mockApi({
+      "GET /api/v1/auth/session": [SESSION],
+      "GET /api/v1/integrations/oauth/pending": [ok(pending())],
+      "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "/login?resume=fresh" })],
+    });
+    window.localStorage.setItem("w360.cart", "[1]");
+    window.localStorage.setItem("w360.store-org", "acme");
+    render(<ProductAccessChooser />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use another account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Log in to another account/ }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?resume=fresh"));
+    expect(window.localStorage.getItem("w360.cart")).toBeNull();
+    expect(window.localStorage.getItem("w360.store-org")).toBeNull();
+  });
+
   it("Create new account: the server signs this account out and names the sign-up page", async () => {
     query = "resume=tok123";
     const calls = mockApi({

@@ -10,9 +10,11 @@ export default async function SignupPage() {
   const origins = readPortalOrigins(process.env);
   const host = (await headers()).get("host") ?? "";
   if (origins?.store && portalForHost(host, origins) === "store") return <StoreSignUpScreen />;
+  // 2026-11-27: on WorkEasy360 Accounts, the Sign Up half of its Log In / Sign Up card.
+  const accounts = Boolean(origins && portalForHost(host, origins) === "auth");
   return (
     <Suspense fallback={<p aria-live="polite">Loading…</p>}>
-      <SignupScreen />
+      <SignupScreen accounts={accounts} accountsHost={accounts && origins ? new URL(origins.auth).host : undefined} />
     </Suspense>
   );
 }

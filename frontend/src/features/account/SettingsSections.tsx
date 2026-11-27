@@ -214,13 +214,13 @@ export function CloseAccount({ appOrigin }: { appOrigin: string }) {
   const [open, setOpen] = useState(false);
   const [blocked, setBlocked] = useState<ClosureBlockers | null>(null);
   return (
-    <Panel title="Close account" description="Permanently close this WorkEasy360 account.">
+    <Panel title="Close account" description="Close this WorkEasy360 account. Reopening it later is a request to Help &amp; Support.">
       <div className={`${styles.section} ${styles.danger}`}>
         <p>Closing your account:</p>
         <ul className={styles.list}>
           <li>stops this account signing in to WorkEasy360 Accounts, User Admin, the Store and every WorkEasy360 product;</li>
           <li>signs you out everywhere, and tells the products you are signed in to;</li>
-          <li>ends your memberships. Each organization keeps its own records - invoices, orders and what you created for it;</li>
+          <li>leaves your memberships on each organization&apos;s records, but this account can no longer use them; an organization&apos;s owners can remove you in User Admin. Each organization keeps its own records - invoices, orders and what you created for it;</li>
           <li>does not cancel an organization&apos;s subscriptions or close an organization. Those are separate steps in User Admin.</li>
         </ul>
         <LoadGate load={load} what="whether this account can be closed">

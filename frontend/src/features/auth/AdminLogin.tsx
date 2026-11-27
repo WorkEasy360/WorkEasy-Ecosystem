@@ -123,13 +123,15 @@ type FrameProps = {
   description?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** Between the logo and the title (WorkEasy360 Accounts' "Accounts" pill). */
+  badge?: React.ReactNode;
 };
 
 /**
  * The two-sided sign-in frame: a portal's story on the left (`hero`), the card on
  * the right. The Admin and Partner portals each pass their own story.
  */
-export function AuthSplitFrame({ hero, title, description, children, footer }: FrameProps & { hero: React.ReactNode }) {
+export function AuthSplitFrame({ hero, title, description, children, footer, badge }: FrameProps & { hero: React.ReactNode }) {
   // Issues the CSRF cookie every form here needs (auth_views docstring).
   useSession();
   return (
@@ -139,6 +141,7 @@ export function AuthSplitFrame({ hero, title, description, children, footer }: F
         <div className={styles.card}>
           <div className={styles.cardHead}>
             <Logo size="lg" />
+            {badge}
             <h1 className={styles.title}>{title}</h1>
             {description && <p className={styles.description}>{description}</p>}
           </div>

@@ -48,7 +48,8 @@ export default async function LoginPage() {
     // ADR-065: the Store signs its customers in in its own frame (a product sign-in
     // never comes here - it is the central sign-in host's).
     if (portal === "store") return <StoreSignInScreen />;
-    return <LoginScreen portal={portal} />;
+    // The address shown at the foot of WorkEasy360 Accounts' sign-in card.
+    return <LoginScreen portal={portal} accountsHost={new URL(origins.auth).host} />;
   }
   const canonical = (process.env.W360_CANONICAL_HOST ?? "").trim().toLowerCase();
   if (canonical && host && host !== canonical) {

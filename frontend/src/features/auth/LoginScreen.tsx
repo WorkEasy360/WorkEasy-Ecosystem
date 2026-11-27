@@ -7,6 +7,7 @@ import { StatusScreen } from "@/components/StatusScreen";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
+import { AccountsLoginScreen } from "@/features/auth/AccountsLogin";
 import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
 import { continueFromAccounts } from "@/features/auth/accountsSignIn";
@@ -187,8 +188,13 @@ function SignInCard({ portal }: { portal: HostPortal }) {
  * (AdminLogin.tsx, PartnerLogin.tsx, UserLogin.tsx - the owner's reference
  * images). A product's or a partner's branded sign-in (`?resume=`, `?brand=`)
  * never does - it is the User mode, on the standard page - and neither does the
- * central sign-in host, which serves product sign-ins only. */
-function ScreenForMode({ portal }: { portal: HostPortal }) {
+ * central sign-in host, which serves product sign-ins only.
+ *
+ * WorkEasy360 Accounts (the `auth` host) has its own screen since 2026-11-27 (the
+ * owner's reference image "Account Login", AccountsLogin.tsx), for its own sign-in
+ * and for product sign-ins alike - except a partner's branded sign-in (`?brand=`),
+ * which never shows the WorkEasy360 story. */
+function ScreenForMode({ portal, accountsHost }: { portal: HostPortal; accountsHost?: string }) {
   const searchParams = useSearchParams();
   const mode = modeFor(portal, searchParams);
   if (mode === "admin" || mode === "partner") {
@@ -196,6 +202,14 @@ function ScreenForMode({ portal }: { portal: HostPortal }) {
       <>
         <AlreadySignedInRedirect portal={portal} />
         {mode === "admin" ? <AdminLoginScreen /> : <PartnerLoginScreen />}
+      </>
+    );
+  }
+  if (portal === "auth" && !brandHostParam(searchParams.get("brand"))) {
+    return (
+      <>
+        <AlreadySignedInRedirect portal={portal} />
+        <AccountsLoginScreen accountsHost={accountsHost} />
       </>
     );
   }
@@ -211,10 +225,10 @@ function ScreenForMode({ portal }: { portal: HostPortal }) {
   return <StandardSignIn portal={portal} />;
 }
 
-export function LoginScreen({ portal }: { portal?: Portal } = {}) {
+export function LoginScreen({ portal, accountsHost }: { portal?: Portal; accountsHost?: string } = {}) {
   return (
     <Suspense fallback={<StatusScreen>Loading…</StatusScreen>}>
-      <ScreenForMode portal={portal} />
+      <ScreenForMode portal={portal} accountsHost={accountsHost} />
     </Suspense>
   );
 }

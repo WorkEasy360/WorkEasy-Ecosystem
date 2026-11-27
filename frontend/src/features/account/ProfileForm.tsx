@@ -180,8 +180,21 @@ export const PROFILE_SAVED = "Saved. Products show your new details the next tim
 
 /** The profile card: read mode with Edit, then Save / Cancel. Cancel restores the saved
  * values - nothing is sent until Save. */
-export function ProfileCard({ profile, onSaved }: { profile: AccountProfile; onSaved: (profile: AccountProfile) => void }) {
-  const [editing, setEditing] = useState(false);
+export function ProfileCard({
+  profile,
+  onSaved,
+  editing: editingProp,
+  onEditingChange,
+}: {
+  profile: AccountProfile;
+  onSaved: (profile: AccountProfile) => void;
+  /** Controlled edit mode (My Profile's "Edit Profile" opens it from the card above). */
+  editing?: boolean;
+  onEditingChange?: (editing: boolean) => void;
+}) {
+  const [ownEditing, setOwnEditing] = useState(false);
+  const editing = editingProp ?? ownEditing;
+  const setEditing = onEditingChange ?? setOwnEditing;
   const [saved, setSaved] = useState(false);
   return (
     <Panel

@@ -1,5 +1,7 @@
 # Accounts V3: gap register and status
 
+> **Superseded for current status by `alignment-2026-11-27.md`** (a re-audit of `main` at `e5eb2a0`, after #4..#16 were merged on 24 November). This file is kept as the 20 November record: its "Merged: No" and "At bfa271a" columns describe that date.
+
 Spec: "WorkEasy360 Accounts & Universal Product Login - Final Update and Development Sign-off Note, Version 3" (19 Nov 2026). Decision record: ADR-075. API contract: `api-contract.md`.
 
 Baseline audited: `feat/universal-login-complete` at `bfa271a` (PR #14). It was audited by reading the code and tests, not by inferring from the 56-check report.
