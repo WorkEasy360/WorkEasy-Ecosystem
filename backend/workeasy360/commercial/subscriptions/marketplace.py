@@ -244,10 +244,17 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
     ``trial_state``: ``available`` (start one), ``active`` (running now),
     ``used`` (had one), ``owned`` (a paid line holds it), ``unavailable`` (no
     trial is offered).
+
+    ``launch_ready``: whether the product can be opened at all - its
+    integration is connected (``ecosystem.launchable_codes``, the launcher's
+    own structural test). A product held but not ready shows that it is being
+    connected instead of an Open button the launcher would refuse with
+    ``product_unavailable``. The launch endpoint still decides every launch.
     """
     from workeasy360.commercial.billing.services import billing_account_or_none
     from workeasy360.commercial.subscriptions import my_products, selectors
     from workeasy360.commercial.subscriptions.selectors import trialled_product_codes
+    from workeasy360.platform.ecosystem import selectors as ecosystem
 
     authz.require(ctx, "platform.organization.view")
     now = timezone.now()
@@ -261,7 +268,9 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
     # The newest product trial per product: what the card says about a trial
     # that ran (ended by time, cancelled, converted) - from server time only.
     latest = {t.product_code: t for t in selectors.product_trials()}
+    launchable = ecosystem.launchable_codes(p["code"] for p in products)
     for product in products:
+        product["launch_ready"] = product["code"] in launchable
         holding = held.get(product["code"])
         product["holding"] = holding.source if holding is not None else None
         if holding is not None and holding.source == "subscription":

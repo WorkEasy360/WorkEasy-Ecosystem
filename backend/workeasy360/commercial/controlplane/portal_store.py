@@ -519,6 +519,7 @@ def _product_page(
                     "trial_ends_at",
                     "trial_days_left",
                     "trial_outcome",
+                    "launch_ready",
                 )
                 if k in product
             },
