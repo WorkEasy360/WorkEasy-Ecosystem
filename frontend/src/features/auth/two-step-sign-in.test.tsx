@@ -114,7 +114,7 @@ const DRIVERS: Driver[] = [
     notSignedIn: () => expect(nav.router.replace).not.toHaveBeenCalled(),
   },
   {
-    name: "the product sign-in on Accounts (LoginForm, ?resume=)",
+    name: "the product sign-in on Accounts (AccountsLogin, ?resume=)",
     render: () => {
       query = "resume=abc123";
       vi.stubGlobal("location", { ...window.location, assign: vi.fn(), replace: vi.fn(), href: "http://localhost/login?resume=abc123" });
@@ -124,7 +124,7 @@ const DRIVERS: Driver[] = [
         </PortalsProvider>,
       );
     },
-    submitPassword: fill("Email", /^Sign in$/),
+    submitPassword: fill("Email Address", /^Log In to WorkEasy360$/),
     signedIn: () => waitFor(() => expect(window.location.href).toBe("/api/v1/integrations/oauth/resume?resume=abc123")),
     notSignedIn: () => expect(window.location.href).toBe("http://localhost/login?resume=abc123"),
   },

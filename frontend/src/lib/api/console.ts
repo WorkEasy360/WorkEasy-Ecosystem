@@ -744,10 +744,11 @@ export const accountApi = {
     }),
   /** ADR-066: a confirmation link goes to the new address; nothing changes
    * until it is used. The same answer whatever the address. */
-  changeEmail: (newEmail: string, password: string) =>
+  changeEmail: (newEmail: string, password: string, code?: string) =>
     apiFetch<{ status: string }>("/api/v1/auth/email", {
       method: "POST",
-      body: json({ new_email: newEmail, password }),
+      // `code`: with two-step verification on (2026-11-27), its current code.
+      body: json({ new_email: newEmail, password, ...(code ? { code } : {}) }),
     }),
   sessions: () => apiFetch<{ sessions: SessionRow[] }>("/api/v1/auth/sessions"),
   revokeSession: (sessionId: string) =>

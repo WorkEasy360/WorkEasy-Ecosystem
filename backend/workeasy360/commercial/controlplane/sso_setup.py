@@ -145,7 +145,25 @@ def _version_tuple(raw: str) -> tuple[int, ...]:
     return tuple(out)
 
 
-def _address_problem(url: Any, *, host: str, scheme: str) -> str:
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _effective_port(parts: Any) -> int | None:
+    """The port an address really uses (its scheme's default when it names none),
+    or ``None`` when the port it names is not a valid one."""
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    return port if port is not None else _DEFAULT_PORTS.get(parts.scheme)
+
+
+def _address_problem(url: Any, *, host: str, scheme: str, port: int | None = None) -> str:
+    """Why ``url`` is not an address on the application's own origin, or ``""``.
+
+    2026-11-27 (alignment audit F.3): the origin is the scheme, host *and port* -
+    another port on the same host is another service, so a callback there is
+    refused too. ``port`` is the application's effective port."""
     if not isinstance(url, str) or not url:
         return "is missing"
     parts = urlsplit(url)
@@ -155,6 +173,8 @@ def _address_problem(url: Any, *, host: str, scheme: str) -> str:
         return "carries credentials or a fragment"
     if (parts.hostname or "").lower() != host:
         return f"is not on {host}"
+    if port is not None and _effective_port(parts) != port:
+        return f"is not on the application's port ({port})"
     return ""
 
 
@@ -314,6 +334,7 @@ def evaluate_document(
     # Addresses: every one on the application's own host.
     app = urlsplit(application_url)
     host, scheme = (app.hostname or "").lower(), app.scheme
+    port = _effective_port(app)
     redirect_uris = doc.get("redirect_uris")
     post_logout = doc.get("post_logout_redirect_uris") or []
     address_problems = []
@@ -334,7 +355,7 @@ def evaluate_document(
     if backchannel:
         named.append(("backchannel_logout_uri", backchannel))
     for label, url in named:
-        problem = _address_problem(url, host=host, scheme=scheme)
+        problem = _address_problem(url, host=host, scheme=scheme, port=port)
         if problem:
             address_problems.append(f"{label} {url!r} {problem}")
     checks.add(

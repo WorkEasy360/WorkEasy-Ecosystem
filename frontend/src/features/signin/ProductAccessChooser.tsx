@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
 import { StatusScreen } from "@/components/StatusScreen";
 import { getSession } from "@/lib/api/auth";
+import { forgetAccountState } from "@/lib/accountState";
 import { ApiError } from "@/lib/api/client";
 import { answerPendingAccess, getPendingAccess, type AccessChoice, type PendingAccess } from "@/lib/api/signIn";
 import { usePortals } from "@/lib/portalContext";
@@ -143,6 +144,10 @@ export function ProductAccessChooser() {
       // "Don't ask me again" belongs to screen 1's Continue (and the product's own sign-in).
       const keep = remember && (choice === "workeasy360" || choice === "product");
       const { redirect_url: next } = await answerPendingAccess(resume, choice, keep);
+      // V3 7.1: the server has signed the previous person out; what they left in
+      // this browser (a cart, a chosen organization, recent records) goes too, as
+      // Switch Account does - nothing of theirs carries to the next person.
+      if (choice === "switch_account" || choice === "create_account") forgetAccountState();
       // A real top-level navigation to a server-built destination.
       window.location.assign(next);
     } catch (err: unknown) {

@@ -42,6 +42,7 @@ TWO_STEP_CHANGED_TEMPLATE = "platform.account.two_step_changed"
 ACCOUNT_CLOSED_TEMPLATE = "platform.account.closed"
 NEW_SIGN_IN_TEMPLATE = "platform.account.new_sign_in"
 SUPPORT_RECEIVED_TEMPLATE = "platform.account.support_received"
+PASSWORD_CHANGED_SIGNED_IN_TEMPLATE = "platform.account.password_changed_signed_in"  # noqa: S105 - a template key  # pragma: allowlist secret
 
 #: A device + network pair seen in a successful sign-in this recently is not new.
 NEW_DEVICE_LOOKBACK = timedelta(days=90)
@@ -239,6 +240,25 @@ def two_step_code_refused(
             )
     except Exception:  # recording never changes the answer
         logger.exception("identity.two_step_refusal_record_failed", user_id=str(user.id))
+
+
+# --- password changed while signed in ---------------------------------------------
+
+
+def password_changed_notice(user: Any, *, device_label: str) -> None:
+    """After a signed-in password change: tell the person's verified address, as
+    a reset is told (Accounts V2/V3 8.2 - 2026-11-27 alignment audit). A security
+    notice, so no preference turns it off. Never fails the change, which has
+    already happened."""
+    try:
+        _notify(
+            user,
+            PASSWORD_CHANGED_SIGNED_IN_TEMPLATE,
+            {"device": device_label or "an unknown device"},
+            f"account:{user.id}:password-changed:{secrets.token_hex(8)}",
+        )
+    except Exception:  # the change stands whether or not the mail goes
+        logger.exception("identity.password_change_notice_failed", user_id=str(user.id))
 
 
 # --- new sign-in alerts -----------------------------------------------------------

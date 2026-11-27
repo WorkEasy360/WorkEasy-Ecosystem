@@ -1,0 +1,586 @@
+/* WorkEasy360 Accounts' shell (CenterShell.tsx, 2026-11-27, the owner's reference
+   image "User Account Dashboard"): a deep green sidebar with the four menus and the
+   Help & Support card, a light top bar, the page on a light sheet. Tokens only. */
+
+.frame {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  background: var(--w360-shell-canvas);
+}
+
+/* --- the sidebar ------------------------------------------------------------- */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px 16px;
+  overflow-y: auto;
+  color: var(--w360-shell-text);
+  background: linear-gradient(170deg, var(--w360-hero-start) 0%, var(--w360-shell) 55%, var(--w360-hero-mid) 100%);
+}
+
+.brandRow {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+
+.brand {
+  display: inline-flex;
+  border-radius: 8px;
+}
+
+.brand:focus-visible {
+  outline: 2px solid var(--w360-shell-active-bar);
+  outline-offset: 4px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 20px;
+  border: 1.5px solid var(--w360-shell-marker);
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-shell-raised);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.nav a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  color: var(--w360-shell-text);
+  font-size: 17px;
+  text-decoration: none;
+}
+
+.nav a svg {
+  flex: none;
+  color: var(--w360-shell-muted);
+}
+
+.nav a:hover {
+  background: var(--w360-shell-raised);
+}
+
+.nav a:focus-visible {
+  outline: 2px solid var(--w360-shell-active-bar);
+  outline-offset: -2px;
+}
+
+/* The current page: a bright green pill with a white bar at its edge (not colour alone). */
+.nav a[aria-current="page"] {
+  font-weight: 700;
+  color: var(--w360-admin-action-text);
+  background: linear-gradient(90deg, var(--w360-shell-active), var(--w360-hero-glow));
+}
+
+.nav a[aria-current="page"] svg {
+  color: var(--w360-admin-action-text);
+}
+
+.nav a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--w360-shell-active-bar);
+}
+
+.helpCard {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 12px;
+  padding: 16px;
+  border: 1px solid var(--w360-shell-border);
+  border-radius: 14px;
+  background: var(--w360-shell-raised);
+}
+
+.helpIcon {
+  color: var(--w360-shell-text);
+}
+
+.helpCard h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  color: var(--w360-shell-text);
+}
+
+.helpCard p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--w360-shell-muted);
+}
+
+.helpLink {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 1.5px solid var(--w360-shell-text);
+  border-radius: var(--w360-radius-pill);
+  color: var(--w360-shell-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.helpLink:hover {
+  background: var(--w360-shell);
+}
+
+.helpLink:focus-visible {
+  outline: 2px solid var(--w360-shell-active-bar);
+  outline-offset: 2px;
+}
+
+/* --- the top bar and the page ---------------------------------------------------- */
+
+.content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px 28px;
+  background: var(--w360-shell-canvas);
+}
+
+.iconLink {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--w360-radius-pill);
+  color: var(--w360-text);
+}
+
+.iconLink:hover {
+  background: var(--w360-admin-accent-soft);
+}
+
+.iconLink:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+/* The AI Assistant and the bell (TopbarMenus.tsx). */
+.popWrap {
+  position: relative;
+}
+
+.assistantButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  margin-right: 8px;
+  padding: 8px 24px;
+  border: 1.5px solid var(--w360-tile-purple);
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-tile-purple-bg);
+  color: var(--w360-tile-purple);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assistantButton:hover {
+  background: var(--w360-surface);
+}
+
+.assistantButton:focus-visible,
+.topics button:focus-visible,
+.backButton:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+button.iconLink {
+  position: relative;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.bellDot {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--w360-shell-canvas);
+  border-radius: 50%;
+  background: var(--w360-danger);
+}
+
+.popPanel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--w360-border);
+  border-radius: 14px;
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  box-shadow: var(--w360-shadow-md);
+}
+
+.popPanel[hidden] {
+  display: none;
+}
+
+.assistantPanel {
+  width: min(380px, calc(100vw - 32px));
+}
+
+.alertsPanel {
+  width: min(400px, calc(100vw - 32px));
+}
+
+.popTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.popLead,
+.popFoot {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.popFoot a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.topics,
+.alerts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.topics button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--w360-text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.topics button:hover {
+  background: var(--w360-admin-accent-soft);
+}
+
+.answer {
+  display: grid;
+  gap: 10px;
+}
+
+.answer p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.answerQ {
+  font-weight: 700;
+}
+
+.answerGo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.backButton {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--w360-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.alerts li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--w360-shell-canvas);
+  font-size: 14px;
+}
+
+.alertMuted {
+  color: var(--w360-text-muted);
+}
+
+.menuWrap {
+  position: relative;
+  padding-left: 12px;
+  border-left: 1px solid var(--w360-border);
+}
+
+.menuButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 2px;
+  border: 0;
+  border-radius: var(--w360-radius-pill);
+  background: transparent;
+  color: var(--w360-text);
+  cursor: pointer;
+}
+
+.menuButton:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--w360-admin-action);
+  color: var(--w360-admin-action-text);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.menuPanel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+  padding: 8px;
+  border: 1px solid var(--w360-border);
+  border-radius: 12px;
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-md);
+}
+
+.menuPanel[hidden] {
+  display: none;
+}
+
+.menuWho {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 4px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--w360-border);
+  overflow-wrap: anywhere;
+}
+
+.menuWho span {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--w360-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: var(--w360-admin-accent-soft);
+}
+
+.menuItem:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: -2px;
+}
+
+.menuItem:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.main {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 28px 28px 48px;
+  display: grid;
+  gap: 24px;
+}
+
+.intro h1 {
+  margin: 0 0 6px;
+  font-size: clamp(26px, 2.4vw, 36px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--w360-text);
+}
+
+.intro p {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 17px;
+}
+
+/* --- a phone or a narrow window: the sidebar becomes the page's head ------------ */
+
+@media (max-width: 900px) {
+  .frame {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    gap: 14px;
+    padding: 14px 16px 10px;
+    overflow: visible;
+  }
+
+  .brandRow {
+    grid-template-columns: auto auto;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .pill {
+    padding: 5px 14px;
+    font-size: 14px;
+  }
+
+  /* The four menus in one row that scrolls inside itself, never the page. */
+  .nav {
+    margin-inline: -16px;
+    overflow-x: auto;
+  }
+
+  .nav ul {
+    display: flex;
+    gap: 6px;
+    width: max-content;
+    padding: 0 16px 4px;
+  }
+
+  .nav a {
+    min-height: 44px;
+    padding: 8px 14px;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+
+  .nav a[aria-current="page"]::before {
+    display: none;
+  }
+
+  .helpCard {
+    display: none;
+  }
+
+  .topbar {
+    min-height: 60px;
+    padding: 8px 16px;
+  }
+
+  .assistantButton {
+    min-height: 44px;
+    margin-right: 0;
+    padding: 8px 14px;
+    font-size: 15px;
+  }
+
+  .popPanel {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    top: 64px;
+    width: auto;
+  }
+
+  .main {
+    padding: 20px 16px 40px;
+  }
+}
+
+/* A section the overview links to (`#profile-details`, `#security-activity`):
+   scrolled to with room above it. */
+.anchor {
+  scroll-margin-top: 16px;
+}

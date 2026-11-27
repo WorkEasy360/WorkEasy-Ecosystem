@@ -1,0 +1,176 @@
+/* WorkEasy360 Accounts' sign-in (AccountsLogin.tsx, the owner's reference image
+   "Account Login"). The Admin sign-in's split frame (AdminLogin.module.css) with the
+   Accounts pill, the Log In / Sign Up switch and the card's three promises.
+   Tokens only, so both themes work. */
+
+/* --- the left panel -------------------------------------------------------- */
+
+.heroBrand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 18px;
+}
+
+.heroRule {
+  width: 2px;
+  height: 40px;
+  border-radius: 1px;
+  background: var(--w360-hero-muted);
+  opacity: 0.6;
+}
+
+.heroKicker {
+  margin: -8px 0 0;
+  color: var(--w360-hero-text);
+  font-size: clamp(16px, 1.5vw, 22px);
+  font-weight: 500;
+}
+
+.heroUnderline {
+  display: block;
+  width: 120px;
+  height: 5px;
+  margin-top: -4px;
+  border-radius: 3px;
+  background: var(--w360-hero-glow);
+}
+
+.menuIcon {
+  background: var(--w360-admin-action);
+  color: var(--w360-admin-action-text);
+}
+
+/* --- the pill ------------------------------------------------------------- */
+
+.pill,
+.pillOnBand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--w360-admin-action-text);
+  background: linear-gradient(180deg, var(--w360-hero-glow), var(--w360-admin-action));
+}
+
+.pillOnBand {
+  padding: 8px 20px;
+  font-size: 20px;
+  border: 2px solid color-mix(in srgb, var(--w360-hero-glow) 70%, transparent);
+}
+
+/* --- Log In | Sign Up --------------------------------------------------------- */
+
+.modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 18px;
+  padding: 3px;
+  border: 1px solid var(--w360-border);
+  border-radius: 12px;
+  background: var(--w360-admin-accent-soft);
+}
+
+.mode,
+.modeCurrent {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  border-radius: 9px;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mode {
+  color: var(--w360-text);
+}
+
+.mode:hover {
+  text-decoration: underline;
+}
+
+.mode:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.modeCurrent {
+  color: var(--w360-admin-action-text);
+  background: var(--w360-admin-action);
+}
+
+.note {
+  margin: 0 0 14px;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+/* --- the card's foot -------------------------------------------------------- */
+
+.promises {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(min-content, 1fr));
+  margin: 18px 0 0;
+  padding: 16px 8px;
+  border-radius: 14px;
+  background: var(--w360-admin-accent-soft);
+}
+
+.promises li {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 8px;
+  padding: 0 6px;
+  color: var(--w360-admin-action);
+  text-align: center;
+}
+
+.promises li + li {
+  border-left: 1px solid color-mix(in srgb, var(--w360-admin-action) 25%, transparent);
+}
+
+.promises span {
+  color: var(--w360-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.host {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  color: var(--w360-text);
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.host svg {
+  flex: none;
+  color: var(--w360-text-muted);
+}
+
+@media (max-width: 480px) {
+  .heroRule,
+  .heroKicker,
+  .heroUnderline {
+    display: none;
+  }
+
+  .pillOnBand {
+    padding: 5px 14px;
+    font-size: 16px;
+  }
+
+  .promises span {
+    font-size: 13px;
+  }
+}

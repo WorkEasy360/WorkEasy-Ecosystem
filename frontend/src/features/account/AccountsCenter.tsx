@@ -8,9 +8,11 @@ import { ChangePasswordForm } from "@/features/console/ChangePasswordForm";
 import { TwoStepPanel } from "@/features/console/TwoStepPanel";
 import { SignInPreferencesScreen } from "@/features/signin/SignInPreferencesScreen";
 import { CenterShell } from "./CenterShell";
+import styles from "./AccountShell.module.css";
 import { ActiveSessions, LoginHistory } from "./CenterSessions";
 import { ConnectedLogins } from "./ConnectedLogins";
-import { ProfileCard, ProfileHeader } from "./ProfileForm";
+import { ProfileCard } from "./ProfileForm";
+import { Greeting, ProfileSummary, SectionCards, SecurityOverview } from "./ProfileOverview";
 import { SignInEmailCard } from "./SignInEmailCard";
 import { CloseAccount, HelpAndSupport, NotificationSettings, RecentSecurityActivity, YourOrganizations } from "./SettingsSections";
 
@@ -20,20 +22,64 @@ import { CloseAccount, HelpAndSupport, NotificationSettings, RecentSecurityActiv
  * a column of simple cards; everything organizational is a link to User Admin.
  */
 
-/** My Profile: who you are - name, photo, verified email, WorkEasy360 ID - and the details you can edit. */
+/** Where Home's "Edit Profile" goes: My Profile with its details open for editing. */
+export const EDIT_PROFILE_HREF = "/account/profile?edit=1";
+
+/**
+ * Home (2026-11-27, the owner's reference image "User Account Dashboard"): the page
+ * that opens first - a greeting, the person's card, the four sections as cards,
+ * security at a glance and recent security activity. Read only: every change happens
+ * on its section's page.
+ */
+export function CenterHome() {
+  const [load] = useLoad(() => accountCenterApi.profile(), []);
+  const shown = load.status === "ready" ? load.data : null;
+  return (
+    <CenterShell current="home" person={shown}>
+      <LoadGate load={load} what="your account">
+        {(profile) => (
+          <>
+            <Greeting profile={profile} />
+            <ProfileSummary profile={profile} onEdit={() => window.location.assign(EDIT_PROFILE_HREF)} />
+            <SectionCards />
+            <SecurityOverview profile={profile} />
+          </>
+        )}
+      </LoadGate>
+    </CenterShell>
+  );
+}
+
+/**
+ * My Profile: who you are - photo, name, verified email, WorkEasy360 ID - and the
+ * details you can edit. Opened from Home's "Edit Profile" (`?edit=1`), the details
+ * open for editing.
+ */
 export function CenterProfile() {
   const [load] = useLoad(() => accountCenterApi.profile(), []);
   // What the last save answered, until the page is opened again.
   const [saved, setSaved] = useState<AccountProfile | null>(null);
+  // Home's "Edit Profile" opens this page with the details open (`?edit=1`). The
+  // details render only after the profile loads in the browser, so the server's
+  // first render never shows them either way.
+  const [editing, setEditing] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("edit") === "1");
+  const shown = saved ?? (load.status === "ready" ? load.data : null);
+  const edit = () => {
+    setEditing(true);
+    // The details card sits below the person's card: bring it into view.
+    requestAnimationFrame(() => document.getElementById("profile-details")?.scrollIntoView?.({ behavior: "smooth", block: "start" }));
+  };
   return (
-    <CenterShell current="profile" title="My Profile" lead="Your name, photo and personal details, as WorkEasy360 and its products show them.">
+    <CenterShell current="profile" title="My Profile" lead="Your photo, name and the details products show." person={shown}>
       <LoadGate load={load} what="your profile">
         {(data) => {
           const profile = saved ?? data;
           return (
             <>
-              <ProfileHeader profile={profile} />
-              <ProfileCard profile={profile} onSaved={setSaved} />
+              <ProfileSummary profile={profile} onEdit={edit} showId />
+              <div id="profile-details" className={styles.anchor}>
+                <ProfileCard profile={profile} onSaved={setSaved} editing={editing} onEditingChange={setEditing} />
+              </div>
             </>
           );
         }}
@@ -52,7 +98,7 @@ export function CenterLoginSecurity() {
       lead="How you sign in: your email, your password, two-step verification, and how products sign you in."
     >
       <LoadGate load={load} what="your sign-in email">
-        {(p) => <SignInEmailCard email={p.email} verified={p.email_verified} onChanged={reload} />}
+        {(p) => <SignInEmailCard email={p.email} verified={p.email_verified} twoStep={p.two_step_enabled} onChanged={reload} />}
       </LoadGate>
       <Panel title="Password" description="Changing it signs out every other device; this one stays signed in.">
         <ChangePasswordForm popup />
@@ -87,7 +133,9 @@ export function CenterSettings({ appOrigin }: { appOrigin: string }) {
   return (
     <CenterShell current="settings" title="Settings" lead="Your notifications, recent security activity, your organizations and closing your account.">
       <NotificationSettings />
-      <RecentSecurityActivity />
+      <div id="security-activity" className={styles.anchor}>
+        <RecentSecurityActivity />
+      </div>
       <YourOrganizations appOrigin={appOrigin} />
       <CloseAccount appOrigin={appOrigin} />
       <HelpAndSupport />
