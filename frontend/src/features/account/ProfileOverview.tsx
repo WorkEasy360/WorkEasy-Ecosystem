@@ -93,7 +93,7 @@ export function ProfileSummary({ profile, onEdit, showId = false }: { profile: A
           </p>
         )}
         <p className={styles.phoneRow}>
-          <Icon name="device" size={18} />
+          <Icon name="smartphone" size={18} />
           <span className={styles.muted}>Mobile: {MOBILE_NOT_ADDED}</span>
         </p>
         {showId && (
@@ -203,7 +203,7 @@ function SecuritySummary({ profile, events }: { profile: AccountProfile; events:
           )}
         </li>
         <li>
-          <Icon name="device" size={20} />
+          <Icon name="smartphone" size={20} />
           <span className={styles.rowLabel}>Mobile</span>
           <span className={styles.rowValue}>Not added</span>
           <Badge tone="neutral">Coming soon</Badge>

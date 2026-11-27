@@ -62,6 +62,7 @@ const PATHS: Record<string, string> = {
   arrowDown: "M12 5v14m-6-6 6 6 6-6",
   arrowRight: "M5 12h14m-6-6 6 6-6 6",
   home: "M3 11 12 4l9 7M5 10v10h5v-6h4v6h5V10",
+  smartphone: "M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm4 16h.01",
   translate: "M3 5h8M7 3v2m2 0c-.6 3.5-2.8 6.3-6 8m2-5c1 2 2.6 3.6 4.5 4.5M12 21l4.5-10L21 21m-7.5-3h6",
   calendar: "M4 6h16v14H4V6Zm0 4h16M8 3v4m8-4v4",
   user: "M20 21v-1a5 5 0 0 0-5-5H9a5 5 0 0 0-5 5v1M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
