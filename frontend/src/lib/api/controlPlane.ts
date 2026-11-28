@@ -335,6 +335,20 @@ export interface TrialConfig {
   seat_limit: number | null;
   payment_method_required: boolean;
   eligible_plan_codes: string[];
+  /** ADR-078: how often one organization may trial it, who may, and whether
+   * one trial per person holds across their organizations. Omitted on a write:
+   * what is stored is kept. */
+  repeat_policy?: "never" | "after_cooldown";
+  repeat_after_days?: number | null;
+  eligibility?: "all_organizations" | "new_customers";
+  one_trial_per_person?: boolean;
+}
+
+/** ADR-078: the product role each organization role gets at sign-in. */
+export interface RolePolicy {
+  custom: Record<string, string>;
+  effective: Record<string, string>;
+  organization_roles: string[];
 }
 
 export interface ConsoleProductPlan {
@@ -956,6 +970,9 @@ export const adminApi = {
     apiFetch<{ media: ProductMediaRow[] }>(`${admin}/products/${id}/media/reorder`, { method: "POST", body: json({ order }) }),
   setTrialConfig: (productId: string, config: TrialConfig) =>
     apiFetch<TrialConfig>(`${admin}/catalog/products/${productId}/trial`, { method: "PUT", body: json(config) }),
+  rolePolicy: (productId: string) => apiFetch<RolePolicy>(`${admin}/catalog/products/${productId}/role-policy`),
+  setRolePolicy: (productId: string, policy: Record<string, string>) =>
+    apiFetch<RolePolicy>(`${admin}/catalog/products/${productId}/role-policy`, { method: "PUT", body: json({ policy }) }),
   updateIntegration: (productCode: string, changes: IntegrationChanges) =>
     apiFetch<ConsoleIntegration>(`${admin}/products/${productCode}/integration`, { method: "PATCH", body: json(changes) }),
   registerIntegration: (productCode: string, spec: IntegrationChanges) =>

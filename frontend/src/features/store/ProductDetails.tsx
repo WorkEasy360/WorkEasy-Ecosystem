@@ -13,6 +13,7 @@ import { DemoVideo, Gallery } from "./Gallery";
 import { Lightbox } from "./Lightbox";
 import { ProductCard, ProductTile, freeOffers, tileIcon } from "./ProductCard";
 import { checkoutHref, trialHref } from "./checkoutLinks";
+import { AccessActions } from "./productAccess";
 import { storePaths } from "./links";
 import styles from "./StorePages.module.css";
 import shell from "./Store.module.css";
@@ -353,10 +354,24 @@ function PlanBox({
             Start Free Plan
           </Action>
         )}
-        {trialPlan && (
+        {trialPlan && preview && (
           <Action preview={preview} href={trialHref(p.code, trialPlan.plan_code)}>
             Start {p.trial.duration_days ? `${p.trial.duration_days}-day ` : ""}Free Trial
           </Action>
+        )}
+        {!preview && (
+          // 2026-11-28: the customer's own access - Open Product, Start Free Trial
+          // (one click, no checkout), Setting Up, Retry Setup - from the server.
+          <div className={styles.boxAccess}>
+            <AccessActions
+              code={p.code}
+              title={p.title}
+              productSlug={p.slug}
+              trialPlan={trialPlan?.plan_code ?? null}
+              trialDays={p.trial.duration_days ?? null}
+              showBuy={false}
+            />
+          </div>
         )}
         {!price && !trialPlan && (
           <Action preview={preview} href={`${storePaths.help}#contact`}>

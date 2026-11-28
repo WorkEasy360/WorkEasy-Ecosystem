@@ -9,6 +9,7 @@ import { publicApi, type PublicStorePage, type SiteSettings } from "@/lib/api/pu
 import { orgAccountApi, type OrgNotification } from "@/lib/api/orgAccount";
 import { usePortals } from "@/lib/portalContext";
 import { StoreAccountProvider, useMyAccount, useStoreAccount } from "./account";
+import { ProductAccessProvider } from "./productAccess";
 import { POLICIES, myAccountLinks, partnerPaths, storePaths } from "./links";
 import styles from "./Store.module.css";
 
@@ -606,7 +607,9 @@ function StoreFooter({ page }: { page: PublicStorePage | null }) {
 export function StoreShell({ children }: { children: ReactNode }) {
   return (
     <StoreAccountProvider>
-      <ShellBody>{children}</ShellBody>
+      <ProductAccessProvider>
+        <ShellBody>{children}</ShellBody>
+      </ProductAccessProvider>
     </StoreAccountProvider>
   );
 }

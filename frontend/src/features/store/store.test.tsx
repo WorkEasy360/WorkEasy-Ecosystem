@@ -250,7 +250,10 @@ describe("the marketplace", () => {
         <StoreHomeScreen />
       </StoreShell>,
     );
-    expect(await screen.findByRole("link", { name: "Buy now: WorkEasy CRM" })).toHaveAttribute("href", "/store/product/easy-crm#plans");
+    // A visitor: a product with a trial offers it on the card (the checkout signs
+    // them in or creates the account, then starts it); one without, Buy Now.
+    const trialLink = await screen.findByRole("link", { name: "Start 7-day Free Trial: WorkEasy CRM" });
+    expect(trialLink.getAttribute("href")).toMatch(/^\/store\/checkout\?trial=easy_crm&trial_plan=/);
     expect(screen.getAllByText("/user/year").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Free plan").length).toBeGreaterThan(0);
     expect(screen.getAllByText("7-day free trial").length).toBeGreaterThan(0);

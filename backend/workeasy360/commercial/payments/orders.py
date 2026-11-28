@@ -1501,6 +1501,13 @@ def _place_fulfilled(
             },
         )
         idempotency.complete(claim, result_ref=f"payments.order:{order.id}")
+    # ADR-078: a free plan (or a plan's own trial) opens at once, like a paid
+    # order (ADR-073 G2) - the same seating, the same guarantees.
+    seat_the_buyer(
+        ctx.organization_id,
+        user_id=ctx.user_id,
+        product_codes=list(order.product_codes or []),
+    )
     return order
 
 

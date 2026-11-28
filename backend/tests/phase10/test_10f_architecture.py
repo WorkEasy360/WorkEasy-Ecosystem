@@ -507,4 +507,9 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # list) seeded from the old fixed list and the categories in use - no
         # catalog row is rewritten (tests/product_categories).
         "0015_product_categories.py",
+        # ADR-078: the trial's eligibility and repeat rules (four columns with
+        # database defaults - the old rule: anyone, once - and two checks) and
+        # the product's default-role policy (one column, default {} = the
+        # platform default) - no catalog row is rewritten (tests/auto_trial).
+        "0016_trial_and_role_policy.py",
     ]

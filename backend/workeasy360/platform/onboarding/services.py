@@ -189,6 +189,75 @@ def create_organization(*, user_id: UUID, name: Any, idempotency_key: str | None
     return created
 
 
+#: The most a default workspace name borrows from the person's own name.
+_DEFAULT_NAME_PART = 60
+
+
+def default_workspace_name(full_name: str, email: str) -> str:
+    """ "Asha's Workspace": the person's first name, else the part of their
+    address before the @, else plain "My Workspace". Renamable later."""
+    first = (str(full_name or "").split() or [""])[0]
+    if not first:
+        first = str(email or "").partition("@")[0].strip()
+    first = first[:_DEFAULT_NAME_PART].strip()
+    return f"{first}'s Workspace" if first else "My Workspace"
+
+
+def ensure_workspace(
+    *, user_id: UUID, name: Any = None, idempotency_key: str | None = None
+) -> dict[str, Any]:
+    """The organization this person works in, created for them if they have
+    none (2026-11-28, automatic free trials): a customer who signed up without
+    a company can start a trial straight away, as its owner.
+
+    - No organization: one is created through ``create_organization`` (the
+      creator becomes its owner, the owner role is assigned, audited), named
+      ``name`` or a default from the person's own name.
+    - Exactly one: that one, untouched.
+    - Several: refused with ``organization_required`` - the person chooses; one
+      is never picked for them.
+
+    **At most one is ever created**, however many requests race: the person's
+    account row is locked first and their memberships counted after the lock,
+    so a double click, two tabs or a retry all see the organization the first
+    one made. Authorization is the same as creating one by hand: any active
+    account (``create_organization`` re-checks it).
+    """
+    from workeasy360.contracts.errors import OrganizationValidationError
+    from workeasy360.platform.identity import lifecycle
+    from workeasy360.platform.organizations.selectors import organizations_for_user
+
+    with transaction.atomic():
+        user = lifecycle.lock(user_id)
+        found = organizations_for_user(user_id, limit=2).items
+        if len(found) > 1:
+            raise OrganizationValidationError(
+                "Choose the organization to use.",
+                field="organization",
+                reason="organization_required",
+            )
+        if found:
+            row = found[0]
+            return {
+                "organization_id": row["organization_id"],
+                "slug": row["slug"],
+                "display_name": row["display_name"],
+                "created": False,
+            }
+        wanted = name if isinstance(name, str) and name.strip() else None
+        created = create_organization(
+            user_id=user_id,
+            name=wanted or default_workspace_name(user.full_name, user.email),
+            idempotency_key=f"workspace:{idempotency_key}" if idempotency_key else None,
+        )
+    return {
+        "organization_id": str(created.organization_id),
+        "slug": created.slug,
+        "display_name": created.display_name,
+        "created": bool(created.created),
+    }
+
+
 def remove_member(ctx: TenantContext, membership_id: UUID) -> None:
     """Remove a membership from the acting user's organization.
 

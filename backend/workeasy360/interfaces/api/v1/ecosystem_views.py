@@ -958,6 +958,12 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         profile={
             **_profile_claims(redeemed.user_id, redeemed.scope),
             **_organization_claims(redeemed.organization_id, redeemed.scope),
+            **_role_claims(
+                redeemed.user_id,
+                redeemed.organization_id,
+                redeemed.integration.product_code,
+                redeemed.scope,
+            ),
         },
     )
     from workeasy360.platform.identity.selectors import session_epoch
@@ -1054,6 +1060,45 @@ def _organization_claims(organization_id: Any, scope: tuple[str, ...]) -> dict[s
     name = organization_names([organization_id]).get(organization_id, "")
     # Omitted when empty, as the profile claims are (OIDC Core section 5.3.2).
     return {"organization_name": name} if name else {}
+
+
+def _role_claims(
+    user_id: Any, organization_id: Any, product_code: str, scope: tuple[str, ...]
+) -> dict[str, Any]:
+    """ADR-078, for the ``organization`` scope: the person's organization
+    roles and the **product role** the product's default-role policy gives
+    them (``catalog.selectors.product_role_for``) - what a product assigns when
+    it creates the person's account at first sign-in, and may re-apply at
+    every sign-in. Product-level only: the policy can never name a platform or
+    staff authority, and no staff right of the person is ever stated here.
+
+    Read in the organization's own scope. A person who is no longer an active
+    member gets no role claims (authorization already refused them a code).
+    """
+    if "organization" not in scope:
+        return {}
+    from workeasy360.commercial.catalog.selectors import product_role_for
+    from workeasy360.integration.scheduling.services import routing_context
+    from workeasy360.platform.authz.services import system_role_keys
+    from workeasy360.platform.organizations.selectors import membership_for_user
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    ctx = routing_context(organization_id)
+    if ctx is None:
+        return {}
+    with tenant_context(ctx), organization_db_scope(organization_id):
+        member = membership_for_user(ctx, user_id)
+        if member is None or member["status"] != "active":
+            return {}
+        roles = set(system_role_keys([member["id"]]).get(str(member["id"]), []))
+    if member["is_owner"]:
+        roles.add("owner")
+    ordered = sorted(roles)
+    return {
+        "organization_roles": ordered,
+        "product_role": product_role_for(product_code, ordered),
+    }
 
 
 # --- userinfo -------------------------------------------------------------

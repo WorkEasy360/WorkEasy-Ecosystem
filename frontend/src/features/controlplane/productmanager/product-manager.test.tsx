@@ -27,6 +27,11 @@ vi.mock("next/navigation", () => ({
 }));
 
 const ADMIN = "/api/v1/admin";
+const ROLE_POLICY = {
+  custom: {},
+  effective: { owner: "admin", admin: "admin", billing_manager: "member", member: "member", readonly: "viewer" },
+  organization_roles: ["owner", "admin", "billing_manager", "member", "readonly"],
+};
 const MANAGE = ["platform.staff_catalog.manage", "platform.staff_integration.manage", "platform.staff_audit.view"];
 const VIEW = ["platform.staff_catalog.view"];
 
@@ -503,10 +508,70 @@ describe("Product detail", () => {
         seat_limit: null,
         payment_method_required: false,
         eligible_plan_codes: [],
+        // ADR-078: the default rule, unless changed - once per organization, anyone.
+        repeat_policy: "never",
+        repeat_after_days: null,
+        eligibility: "all_organizations",
+        one_trial_per_person: false,
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(await screen.findByText("Trial configuration for Draft Tool saved.")).toBeInTheDocument();
+  });
+
+  it("sets who may trial a product and how often (ADR-078)", async () => {
+    query = "tab=availability";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT))],
+      [`PUT ${ADMIN}/catalog/products/p2/trial`]: [ok({})],
+      [`GET ${ADMIN}/catalog/products/p2/role-policy`]: [ok(ROLE_POLICY)],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p2" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit trial" }));
+    const popup = screen.getByRole("dialog", { name: "Trial" });
+    fireEvent.click(within(within(popup).getByRole("group", { name: "Repeat trials" })).getByLabelText("Again after a waiting period"));
+    const days = within(popup).getByLabelText("Days after a trial ends before another may start");
+    fireEvent.change(days, { target: { value: "0" } });
+    expect(within(popup).getByText("Enter 1 to 730 days.")).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save trial configuration" })).toBeDisabled();
+    fireEvent.change(days, { target: { value: "60" } });
+    fireEvent.click(within(within(popup).getByRole("group", { name: "Who can start a trial" })).getByLabelText("Only organizations that never bought it"));
+    fireEvent.click(within(popup).getByLabelText(/One trial per person/));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save trial configuration" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === `PUT ${ADMIN}/catalog/products/p2/trial`)?.body).toMatchObject({
+        repeat_policy: "after_cooldown",
+        repeat_after_days: 60,
+        eligibility: "new_customers",
+        one_trial_per_person: true,
+      }),
+    );
+  });
+
+  it("sets the default product roles, never a platform role (ADR-078)", async () => {
+    query = "tab=availability";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT))],
+      [`GET ${ADMIN}/catalog/products/p2/role-policy`]: [ok(ROLE_POLICY)],
+      [`PUT ${ADMIN}/catalog/products/p2/role-policy`]: [ok({ ...ROLE_POLICY, custom: { member: "agent" } })],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p2" />);
+    const section = await screen.findByRole("region", { name: "Default product roles" });
+    expect(await within(section).findByText("Owner")).toBeInTheDocument();
+    expect(within(section).getAllByText(/platform default/).length).toBe(5);
+    fireEvent.click(within(section).getByRole("button", { name: "Edit roles" }));
+    const popup = screen.getByRole("dialog", { name: "Default product roles" });
+    fireEvent.change(within(popup).getByLabelText("Owner"), { target: { value: "super_admin" } });
+    expect(within(popup).getByText(/not a platform or staff role/)).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save roles" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Owner"), { target: { value: "admin" } });
+    fireEvent.change(within(popup).getByLabelText("Member"), { target: { value: "agent" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save roles" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === `PUT ${ADMIN}/catalog/products/p2/role-policy`)?.body).toEqual({
+        policy: { owner: "admin", admin: "admin", billing_manager: "member", member: "agent", readonly: "viewer" },
+      }),
+    );
   });
 
   it("the store listing saves only what changed, and the slug is fixed once on sale", async () => {

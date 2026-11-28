@@ -91,6 +91,11 @@ urlpatterns = [
         name="auth-handoff-redeem",
     ),
     path("organizations", auth_views.organizations_view, name="organizations"),
+    path(
+        "organizations/workspace",
+        auth_views.workspace_view,
+        name="organizations-workspace",
+    ),
     # --- Phase 8 extension: the account itself ---
     path("auth/password", account_views.password_view, name="auth-password"),
     # ADR-066: change the sign-in email (a link to the new address confirms).
@@ -619,6 +624,23 @@ urlpatterns = [
         "orgs/<slug:org_slug>/store/<slug:product_code>",
         trial_views.store_product_view,
         name="org-store-product",
+    ),
+    # 2026-11-28: automatic free trials - each product's one primary action,
+    # Start Free Trial in one request, and Retry Setup.
+    path(
+        "orgs/<slug:org_slug>/product-access",
+        trial_views.product_access_view,
+        name="product-access",
+    ),
+    path(
+        "orgs/<slug:org_slug>/product-access/<str:product_code>/trial",
+        trial_views.activate_trial_view,
+        name="product-access-trial",
+    ),
+    path(
+        "orgs/<slug:org_slug>/product-access/<str:product_code>/repair",
+        trial_views.repair_access_view,
+        name="product-access-repair",
     ),
     path("orgs/<slug:org_slug>/brand", trial_views.brand_view, name="org-brand"),
     # 2026-11-03: the organization's tickets to its partner (partner helpdesk).
@@ -1637,6 +1659,11 @@ _admin = [
         "admin/catalog/products/<uuid:product_id>/trial",
         admin_catalog_views.product_trial_view,
         name="admin-catalog-product-trial",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>/role-policy",
+        admin_catalog_views.product_role_policy_view,
+        name="admin-catalog-product-role-policy",
     ),
     path(
         "admin/catalog/features",

@@ -9,6 +9,7 @@ import { consoleApi, type ConsoleAccess, type Order, type OrderQuote, type Order
 import { orgAccountApi, type BillingProfile, type OrgWallets } from "@/lib/api/orgAccount";
 import { publicApi, type PublicStoreCard } from "@/lib/api/public";
 import { storeHostApi, type PaymentOption, type StorePaymentAttempt } from "@/lib/api/storeHost";
+import { productAccessApi } from "@/lib/api/productAccess";
 import { describeError } from "@/features/controlplane/ui";
 import { toMinor } from "@/features/controlplane/amounts";
 import { REFERRAL_TOKEN } from "@/features/auth/SelfService";
@@ -21,6 +22,7 @@ import { METER_LABEL, PERIOD_LABEL, PERIOD_TERM } from "./ProductDetails";
 import { ProductTile, tileIcon } from "./ProductCard";
 import { StoreSignInForm, StoreSignUpForm } from "./StoreAuth";
 import { useShellCatalog } from "./StoreShell";
+import { trialProblem } from "./productAccess";
 import { myAccountLinks, storePaths } from "./links";
 import styles from "./Checkout.module.css";
 import shell from "./Store.module.css";
@@ -106,7 +108,7 @@ function Card({ n, icon, title, children, id }: { n: number; icon: string; title
 
 // --- 1. account & organization ---------------------------------------------------
 
-function AccountStep({ returnPath }: { returnPath: string }) {
+function AccountStep({ returnPath, trial }: { returnPath: string; trial: boolean }) {
   const account = useStoreAccount();
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [sent, setSent] = useState(false);
@@ -159,7 +161,7 @@ function AccountStep({ returnPath }: { returnPath: string }) {
         </div>
       </div>
       {orgs.length === 0 ? (
-        <NoOrganization />
+        <NoOrganization trial={trial} />
       ) : (
         <div className={styles.field}>
           <label htmlFor={selectId}>
@@ -187,19 +189,53 @@ function AccountStep({ returnPath }: { returnPath: string }) {
   );
 }
 
-function NoOrganization() {
-  const myAccount = useMyAccount();
+function NoOrganization({ trial }: { trial: boolean }) {
+  const account = useStoreAccount();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const key = useRef(newKey());
+  if (trial) {
+    // 2026-11-28: nothing to do first - Start Free Trial creates it.
+    return (
+      <p className={shell.notice} role="status">
+        <Icon name="building" size={18} />
+        <span>Your workspace is created automatically when you start the trial. You will be its owner.</span>
+      </p>
+    );
+  }
   return (
-    <p className={`${shell.notice} ${shell.warningNotice}`} role="alert">
+    <div className={`${shell.notice} ${shell.warningNotice}`} role="status">
       <Icon name="info" size={18} />
       <span>
-        Your account has no organization yet. Buying is for an organization.{" "}
-        <button type="button" className={styles.linkButton} onClick={() => void myAccount.open("/onboarding")}>
-          Create one in User Admin
-        </button>
-        , then come back.
+        Buying is for an organization, and your account has none yet.{" "}
+        <button
+          type="button"
+          className={styles.linkButton}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setProblem(null);
+            try {
+              const made = await productAccessApi.ensureWorkspace(key.current);
+              account.chooseOrganization(made.slug);
+              account.refresh();
+            } catch (err) {
+              setProblem(err instanceof ApiError ? describeError(err) : "The workspace could not be created. Try again.");
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Creating your workspace…" : "Create my workspace"}
+        </button>{" "}
+        (you will be its owner).
+        {problem && (
+          <span role="alert" className="w360-error-text">
+            {" "}
+            {problem}
+          </span>
+        )}
       </span>
-    </p>
+    </div>
   );
 }
 
@@ -477,6 +513,7 @@ function Checkout({ ctx, returnPath }: { ctx: CheckoutContext; returnPath: strin
   const [status, setStatus] = useState<string | null>(null);
   const [returnOk, setReturnOk] = useState(false);
   const orderKey = useRef(newKey());
+  const workspaceKey = useRef(newKey());
   const payKey = useRef(newKey());
   const placed = useRef<Order | null>(null);
 
@@ -648,8 +685,29 @@ function Checkout({ ctx, returnPath }: { ctx: CheckoutContext; returnPath: strin
     await publicApi.convertReferral(token, organizationId).catch(() => undefined);
   }
 
+  // A signed-in customer with no organization can still start a trial: the
+  // trial creates their workspace (2026-11-28).
+  const noOrganization = signedIn && account.organizations.length === 0;
+  const trialWithoutOrganization = trial && noOrganization;
+
+  async function startTrialHere(target: { product: string; plan: string }) {
+    let orgSlug = slug;
+    if (!orgSlug) {
+      const made = await productAccessApi.ensureWorkspace(workspaceKey.current);
+      orgSlug = made.slug;
+      account.chooseOrganization(made.slug);
+      account.refresh();
+    }
+    const { trial: started } = await productAccessApi.startTrial(orgSlug, target.product, orderKey.current, target.plan);
+    router.push(
+      started
+        ? `${storePaths.complete}?trial=${started.id}&org=${encodeURIComponent(orgSlug)}`
+        : storePaths.product(picked?.card.slug ?? target.product),
+    );
+  }
+
   async function submit() {
-    if (!slug || busy) return;
+    if ((!slug && !trialWithoutOrganization) || busy) return;
     setProblem(null);
     setStatus(null);
     setBusy(true);
@@ -662,10 +720,14 @@ function Checkout({ ctx, returnPath }: { ctx: CheckoutContext; returnPath: strin
       }
       if (account.organization) await referralFirst(account.organization.organization_id);
       if (ctx.target.kind === "trial") {
-        const started = await consoleApi.startTrial(slug, ctx.target.product, ctx.target.plan, orderKey.current);
-        router.push(`${storePaths.complete}?trial=${started.id}&org=${encodeURIComponent(slug)}`);
+        try {
+          await startTrialHere(ctx.target);
+        } catch (err) {
+          setProblem(trialProblem(err));
+        }
         return;
       }
+      if (!slug) return;
       if (!request || !quote) return;
       if (useWallet && (walletWanted < 0 || walletWanted > walletMax)) {
         setProblem(`Enter a wallet amount of at most ${shelfPrice(walletMax, quote.currency)}.`);
@@ -723,10 +785,12 @@ function Checkout({ ctx, returnPath }: { ctx: CheckoutContext; returnPath: strin
       <div className={styles.grid}>
         <div className={styles.colLeft}>
           <Card n={1} icon="user" title="Account & Organization">
-            <AccountStep returnPath={returnPath} />
+            <AccountStep returnPath={returnPath} trial={trial} />
           </Card>
           <Card n={2} icon="receipt" title="Billing Details">
-            {!signedIn || !slug ? (
+            {trial ? (
+              <p className={styles.muted}>A free trial needs no billing details.</p>
+            ) : !signedIn || !slug ? (
               <p className={styles.muted}>Sign in and choose your organization first.</p>
             ) : !canSeeBilling ? (
               <p className={styles.muted}>Billing details are kept by the owner and Billing Managers of this organization.</p>
@@ -937,16 +1001,22 @@ function Checkout({ ctx, returnPath }: { ctx: CheckoutContext; returnPath: strin
                 {status}
               </p>
             )}
-            {signedIn && slug && (
+            {signedIn && (slug || trialWithoutOrganization) && (
               <button
                 type="button"
                 className={`${shell.primary} ${styles.payButton}`}
-                disabled={busy || !canBuy || !picked || (!trial && Boolean(billingAccount) && !quote) || (gatewayMissing && payNow > 0)}
+                disabled={
+                  trialWithoutOrganization
+                    ? busy || !picked
+                    : busy || !canBuy || !picked || (!trial && Boolean(billingAccount) && !quote) || (gatewayMissing && payNow > 0)
+                }
                 onClick={() => void submit()}
               >
                 <Icon name="lock" size={20} />
                 {trial
-                  ? "Start Free Trial"
+                  ? busy
+                    ? "Setting Up…"
+                    : "Start Free Trial"
                   : !billingAccount || billingDirty
                     ? "Save Billing Details"
                     : quote

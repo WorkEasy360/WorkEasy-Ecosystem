@@ -5,6 +5,7 @@ import { Icon } from "@/components/sidebar/icons";
 import type { PublicStoreCard } from "@/lib/api/public";
 import { shelfPrice, taxNote } from "@/features/storefront/StoreBrowser";
 import { storePaths } from "./links";
+import { AccessActions, useProductAccess } from "./productAccess";
 import styles from "./StorePages.module.css";
 import shell from "./Store.module.css";
 
@@ -151,12 +152,38 @@ export function ProductCard({ card }: { card: PublicStoreCard & { highlights?: s
               Coming Soon
             </span>
           ) : (
-            <Link href={`${href}#plans`} className={shell.primary} aria-label={`Buy now: ${card.title}`}>
-              Buy Now <Icon name="chevronRight" size={16} />
-            </Link>
+            <CardAction card={card} href={href} />
           )}
         </div>
       </div>
     </li>
+  );
+}
+
+/** The card's primary action (2026-11-28): the server's access answer once the
+ * customer is signed in (Open Product, Start Free Trial, Setting Up, Retry Setup,
+ * Upgrade Plan, Buy Plan); for a visitor, Start Free Trial where the product has
+ * one, else Buy Now. */
+function CardAction({ card, href }: { card: PublicStoreCard; href: string }) {
+  const access = useProductAccess();
+  const trialPlan = card.trial?.available ? (card.trial.plan_codes?.[0] ?? null) : null;
+  const known = access.products[card.code] !== undefined;
+  if (!known && !trialPlan) {
+    return (
+      <Link href={`${href}#plans`} className={shell.primary} aria-label={`Buy now: ${card.title}`}>
+        Buy Now <Icon name="chevronRight" size={16} />
+      </Link>
+    );
+  }
+  return (
+    <AccessActions
+      code={card.code}
+      title={card.title}
+      productSlug={card.slug}
+      trialPlan={trialPlan}
+      trialDays={card.trial?.duration_days ?? null}
+      buyHref={`${href}#plans`}
+      compact
+    />
   );
 }
