@@ -277,7 +277,7 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
             state = "owned"
         elif holding is not None:
             state = "active"
-        elif product["code"] in trialled:
+        elif product["code"] in trialled and not _may_trial_again(ctx, product, now):
             state = "used"
         elif product["trial"]["available"]:
             state = "available"
@@ -291,6 +291,21 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
         "products": products,
         "bundles": bundles,
     }
+
+
+def _may_trial_again(ctx: TenantContext, product: dict[str, Any], now: Any) -> bool:
+    """A product this organization trialled before, whose trial policy lets it
+    start another now (ADR-078 ``after_cooldown``). Asked only for trialled
+    products with a trial on offer; the default policy answers without a
+    query beyond the offer's."""
+    from workeasy360.commercial.subscriptions.trials import trial_policy_refusal
+
+    if not product["trial"]["available"]:
+        return False
+    offer = catalog.trial_offer(product["code"])
+    if offer is None or offer.repeat_policy != "after_cooldown":
+        return False
+    return trial_policy_refusal(ctx, product["code"], offer, now) is None
 
 
 def _trial_facts(state: str, holding: Any, trial: Any, now: Any) -> dict[str, Any]:

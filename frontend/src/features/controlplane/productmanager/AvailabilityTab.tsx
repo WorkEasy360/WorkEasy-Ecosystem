@@ -1,7 +1,7 @@
 "use client";
 
-import { useId, useState } from "react";
-import { adminApi, type ConsoleProduct, type ProductChanges } from "@/lib/api/controlPlane";
+import { useEffect, useId, useState } from "react";
+import { adminApi, type ConsoleProduct, type ProductChanges, type RolePolicy, type TrialConfig } from "@/lib/api/controlPlane";
 import { dialog, FormPopup } from "../Modal";
 import { ReasonAction } from "../ui";
 import { Segmented } from "../widgets";
@@ -89,9 +89,14 @@ function TrialSection({ product, manage, busy, reload }: { product: ConsoleProdu
   const [days, setDays] = useState(String(current?.duration_days ?? 14));
   const [seatLimit, setSeatLimit] = useState(current?.seat_limit != null ? String(current.seat_limit) : "");
   const [plans, setPlans] = useState<string[]>(current?.eligible_plan_codes ?? []);
+  const [repeat, setRepeat] = useState<NonNullable<TrialConfig["repeat_policy"]>>(current?.repeat_policy ?? "never");
+  const [cooldown, setCooldown] = useState(String(current?.repeat_after_days ?? 90));
+  const [eligibility, setEligibility] = useState<NonNullable<TrialConfig["eligibility"]>>(current?.eligibility ?? "all_organizations");
+  const [perPerson, setPerPerson] = useState(current?.one_trial_per_person ?? false);
   const standardPlans = product.plans.filter((p) => p.kind === "standard");
-  const ids = { days: useId(), seats: useId() };
+  const ids = { days: useId(), seats: useId(), cooldown: useId() };
   const badDays = !/^\d+$/.test(days.trim()) || Number(days) < 1 || Number(days) > 365;
+  const badCooldown = repeat === "after_cooldown" && (!/^\d+$/.test(cooldown.trim()) || Number(cooldown) < 1 || Number(cooldown) > 730);
   const names = Object.fromEntries(product.plans.map((p) => [p.code, p.name]));
 
   function prefill() {
@@ -99,6 +104,10 @@ function TrialSection({ product, manage, busy, reload }: { product: ConsoleProdu
     setDays(String(current?.duration_days ?? 14));
     setSeatLimit(current?.seat_limit != null ? String(current.seat_limit) : "");
     setPlans(current?.eligible_plan_codes ?? []);
+    setRepeat(current?.repeat_policy ?? "never");
+    setCooldown(String(current?.repeat_after_days ?? 90));
+    setEligibility(current?.eligibility ?? "all_organizations");
+    setPerPerson(current?.one_trial_per_person ?? false);
   }
 
   return (
@@ -115,7 +124,7 @@ function TrialSection({ product, manage, busy, reload }: { product: ConsoleProdu
               submitLabel="Save trial configuration"
               buttonClassName="w360-btn w360-btn-secondary"
               disabled={busy}
-              canSubmit={!badDays}
+              canSubmit={!badDays && !badCooldown}
               onOpen={prefill}
               onSubmit={async () => {
                 await adminApi.setTrialConfig(product.id, {
@@ -124,6 +133,10 @@ function TrialSection({ product, manage, busy, reload }: { product: ConsoleProdu
                   seat_limit: seatLimit.trim() ? Number(seatLimit) : null,
                   payment_method_required: false,
                   eligible_plan_codes: plans,
+                  repeat_policy: repeat,
+                  repeat_after_days: repeat === "after_cooldown" ? Number(cooldown) : null,
+                  eligibility,
+                  one_trial_per_person: perPerson,
                 });
                 return `Trial configuration for ${product.name} saved.`;
               }}
@@ -168,6 +181,41 @@ function TrialSection({ product, manage, busy, reload }: { product: ConsoleProdu
                   </label>
                 ))}
               </fieldset>
+              <div className={dialog.span}>
+                <Segmented
+                  legend="Repeat trials"
+                  options={[
+                    { value: "never", label: "Once per organization" },
+                    { value: "after_cooldown", label: "Again after a waiting period" },
+                  ]}
+                  value={repeat}
+                  onChange={(v) => setRepeat(v as typeof repeat)}
+                />
+              </div>
+              {repeat === "after_cooldown" && (
+                <div className={cp.field}>
+                  <label className="w360-label" htmlFor={ids.cooldown}>
+                    Days after a trial ends before another may start
+                  </label>
+                  <input id={ids.cooldown} className="w360-input" type="number" min={1} max={730} value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
+                  {badCooldown && <p className="w360-error-text">Enter 1 to 730 days.</p>}
+                </div>
+              )}
+              <div className={dialog.span}>
+                <Segmented
+                  legend="Who can start a trial"
+                  options={[
+                    { value: "all_organizations", label: "Any organization" },
+                    { value: "new_customers", label: "Only organizations that never bought it" },
+                  ]}
+                  value={eligibility}
+                  onChange={(v) => setEligibility(v as typeof eligibility)}
+                />
+              </div>
+              <label className={`w360-label ${dialog.span}`}>
+                <input type="checkbox" checked={perPerson} onChange={(e) => setPerPerson(e.target.checked)} /> One trial per person across all their
+                organizations (a new workspace is not a new trial)
+              </label>
             </FormPopup>
           </div>
         )}
@@ -193,9 +241,127 @@ function TrialSection({ product, manage, busy, reload }: { product: ConsoleProdu
               <dt>Eligible plans</dt>
               <dd>{current.eligible_plan_codes.length ? current.eligible_plan_codes.map((c) => names[c] ?? c).join(", ") : "None chosen yet"}</dd>
             </div>
+            <div>
+              <dt>Repeat trials</dt>
+              <dd>
+                {current.repeat_policy === "after_cooldown"
+                  ? `Again ${current.repeat_after_days} day${current.repeat_after_days === 1 ? "" : "s"} after the previous one ends`
+                  : "Once per organization"}
+              </dd>
+            </div>
+            <div>
+              <dt>Who can start one</dt>
+              <dd>{current.eligibility === "new_customers" ? "Only organizations that never bought it" : "Any organization"}</dd>
+            </div>
+            <div>
+              <dt>One trial per person</dt>
+              <dd>{current.one_trial_per_person ? "Yes" : "No"}</dd>
+            </div>
           </>
         )}
       </dl>
+    </section>
+  );
+}
+
+const ORG_ROLE_LABEL: Record<string, string> = {
+  owner: "Owner",
+  admin: "Administrator",
+  billing_manager: "Billing Manager",
+  member: "Member",
+  readonly: "Read-only",
+};
+const PRODUCT_ROLE = /^[a-z][a-z0-9_]{1,31}$/;
+const FORBIDDEN_ROLE = /super|platform|staff|root|system|w360|workeasy/;
+
+/** ADR-078: the product role each organization role gets when a member signs
+ * in to the product (sent in the sign-in token; each product maps it to its own
+ * roles). Product-level only - never a platform or staff role. */
+function RolePolicySection({ product, manage, busy }: { product: ConsoleProduct; manage: boolean; busy: boolean }) {
+  const [policy, setPolicy] = useState<RolePolicy | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [tick, setTick] = useState(0);
+  const baseId = useId();
+
+  useEffect(() => {
+    let live = true;
+    adminApi.rolePolicy(product.id).then(
+      (p) => live && setPolicy(p),
+      () => live && setFailed(true),
+    );
+    return () => {
+      live = false;
+    };
+  }, [product.id, tick]);
+
+  const roles = policy?.organization_roles ?? [];
+  const problems = roles.filter((r) => draft[r] !== undefined && (!PRODUCT_ROLE.test(draft[r]) || FORBIDDEN_ROLE.test(draft[r])));
+
+  return (
+    <section className={styles.card} aria-labelledby="roles-title">
+      <div className={styles.sectionHead}>
+        <h2 id="roles-title" className={styles.cardTitle}>
+          Default product roles
+        </h2>
+        {manage && policy && (
+          <div className={styles.toolbar}>
+            <FormPopup
+              label="Edit roles"
+              title="Default product roles"
+              submitLabel="Save roles"
+              buttonClassName="w360-btn w360-btn-secondary"
+              disabled={busy}
+              canSubmit={problems.length === 0}
+              onOpen={() => setDraft({ ...policy.effective })}
+              onSubmit={async () => {
+                await adminApi.setRolePolicy(product.id, draft);
+                return `Default roles for ${product.name} saved.`;
+              }}
+              onDone={() => setTick((n) => n + 1)}
+            >
+              <p className={`${styles.muted} ${dialog.span}`}>
+                The role each member gets in {product.name} when they sign in. Use the role names the product knows (for example admin, member, viewer). A
+                platform or staff role can never be set here.
+              </p>
+              {roles.map((role) => (
+                <div key={role} className={cp.field}>
+                  <label className="w360-label" htmlFor={`${baseId}-${role}`}>
+                    {ORG_ROLE_LABEL[role] ?? role}
+                  </label>
+                  <input
+                    id={`${baseId}-${role}`}
+                    className="w360-input"
+                    value={draft[role] ?? ""}
+                    maxLength={32}
+                    onChange={(e) => setDraft((d) => ({ ...d, [role]: e.target.value.trim().toLowerCase() }))}
+                  />
+                  {problems.includes(role) && <p className="w360-error-text">2 to 32 lower-case letters, digits or _, and not a platform or staff role.</p>}
+                </div>
+              ))}
+            </FormPopup>
+          </div>
+        )}
+      </div>
+      {failed ? (
+        <p className={styles.muted}>The default roles could not be loaded.</p>
+      ) : !policy ? (
+        <p className={styles.muted} aria-live="polite">
+          Loading…
+        </p>
+      ) : (
+        <dl className={styles.facts}>
+          {roles.map((role) => (
+            <div key={role}>
+              <dt>{ORG_ROLE_LABEL[role] ?? role}</dt>
+              <dd>
+                {policy.effective[role]}
+                {policy.custom[role] === undefined && <span className={styles.muted}> (platform default)</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </section>
   );
 }
@@ -267,6 +433,7 @@ export function AvailabilityTab({
 
       <ChannelsSection product={p} manage={manage} busy={busy} reload={reload} />
       <TrialSection product={p} manage={manage} busy={busy} reload={reload} />
+      <RolePolicySection product={p} manage={manage} busy={busy} />
     </div>
   );
 }

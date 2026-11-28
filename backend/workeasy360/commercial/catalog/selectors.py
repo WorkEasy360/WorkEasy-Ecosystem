@@ -227,6 +227,11 @@ class TrialOfferDTO:
     duration_days: int
     seat_limit: int | None
     eligible_plan_codes: tuple[str, ...]
+    #: ADR-078 - the eligibility and repeat rules (``domain.TRIAL_*``).
+    repeat_policy: str = "never"
+    repeat_after_days: int | None = None
+    eligibility: str = "all_organizations"
+    one_trial_per_person: bool = False
 
 
 def trial_offer(product_code: str) -> TrialOfferDTO | None:
@@ -255,6 +260,10 @@ def trial_offer(product_code: str) -> TrialOfferDTO | None:
         duration_days=row.duration_days,
         seat_limit=row.seat_limit,
         eligible_plan_codes=tuple(row.eligible_plan_codes),
+        repeat_policy=row.repeat_policy,
+        repeat_after_days=row.repeat_after_days,
+        eligibility=row.eligibility,
+        one_trial_per_person=row.one_trial_per_person,
     )
 
 
@@ -390,6 +399,10 @@ def trial_row(product: Any) -> dict[str, Any] | None:
         "seat_limit": config.seat_limit,
         "payment_method_required": config.payment_method_required,
         "eligible_plan_codes": list(config.eligible_plan_codes),
+        "repeat_policy": config.repeat_policy,
+        "repeat_after_days": config.repeat_after_days,
+        "eligibility": config.eligibility,
+        "one_trial_per_person": config.one_trial_per_person,
     }
 
 
@@ -1449,3 +1462,40 @@ def included_usage_of(plan_codes: Any) -> dict[str, int]:
             if isinstance(units, int) and not isinstance(units, bool) and units > 0:
                 totals[str(meter)] = totals.get(str(meter), 0) + units
     return totals
+
+
+def product_role_for(product_code: str, organization_roles: Any) -> str:
+    """The product role a member with ``organization_roles`` gets in this
+    product (ADR-078): the product's policy over the platform default. One
+    query; an unknown product answers from the platform default."""
+    from workeasy360.commercial.catalog.domain import resolve_product_role
+    from workeasy360.commercial.catalog.models import Product
+
+    stored = (
+        Product.objects.filter(code=str(product_code))
+        .values_list("role_policy", flat=True)
+        .first()
+    )
+    return resolve_product_role(stored, organization_roles)
+
+
+def role_policy_row(product: Any) -> dict[str, Any]:
+    """What staff see: the stored overrides and the policy in force."""
+    from workeasy360.commercial.catalog.domain import (
+        ORGANIZATION_ROLE_ORDER,
+        effective_role_policy,
+    )
+
+    return {
+        "custom": dict(product.role_policy or {}),
+        "effective": effective_role_policy(product.role_policy),
+        "organization_roles": list(ORGANIZATION_ROLE_ORDER),
+    }
+
+
+def role_policy_of_product(product_id: Any) -> dict[str, Any] | None:
+    """``role_policy_row`` of one product by id, or ``None``."""
+    from workeasy360.commercial.catalog.models import Product
+
+    product = Product.objects.filter(id=product_id).first()
+    return role_policy_row(product) if product is not None else None

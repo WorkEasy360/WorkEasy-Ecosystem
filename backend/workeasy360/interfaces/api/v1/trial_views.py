@@ -88,6 +88,85 @@ def _refuse_if_partner_turned_trial_off(ctx: Any, product_code: Any) -> None:
         raise TrialNotAllowed(reason="not_offered", product_code=code)
 
 
+@require_http_methods(["GET"])
+def product_access_view(request: HttpRequest, org_slug: str) -> JsonResponse:
+    """What this person can do with each product right now (2026-11-28): one
+    primary action per product - open, start a trial, buy, upgrade, setting
+    up, retry setup - decided on the server from the launch decision."""
+    from workeasy360.commercial.provisioning import activation
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    response = JsonResponse(activation.product_access(ctx, _explore_listing(ctx)))
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _access_one(ctx: Any, product_code: str, failure: str = "") -> dict[str, Any]:
+    """One product's access, after a command (read again, from scratch)."""
+    from workeasy360.commercial.provisioning import activation
+    from workeasy360.contracts.errors import CommercialRecordNotFound
+
+    listing = _explore_listing(ctx)
+    wanted = [p for p in listing["products"] if p["code"] == product_code]
+    access = activation.product_access(ctx, {"products": wanted})["products"].get(
+        product_code
+    )
+    if access is None:
+        raise CommercialRecordNotFound("No such product in this store.")
+    return activation.apply_failure(access, failure)
+
+
+@require_http_methods(["POST"])
+def activate_trial_view(
+    request: HttpRequest, org_slug: str, product_code: str
+) -> JsonResponse:
+    """Start Free Trial, all of it in one request (``Idempotency-Key``
+    required): the trial, its entitlement, the starter's seat, and the access
+    check that decides whether the card may say "Open Product". The body may
+    name a ``plan_code``; without one the product's first trial plan is used.
+    Length, seats and features always come from the configuration."""
+    from workeasy360.commercial.provisioning import activation
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    blocked = limited(request, "order_place", user=getattr(request, "user", None))
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    _refuse_if_partner_turned_trial_off(ctx, product_code)
+    listing = _explore_listing(ctx)
+    product = next((p for p in listing["products"] if p["code"] == product_code), None)
+    plan_code = body.get("plan_code")
+    result = activation.activate_trial(
+        ctx,
+        product=product,
+        plan_code=plan_code if isinstance(plan_code, str) else None,
+        idempotency_key=str(request.headers.get("Idempotency-Key") or ""),
+    )
+    started = result["trial"]
+    return JsonResponse(
+        {
+            "trial": trial_json(started) if started is not None else None,
+            "access": _access_one(ctx, product_code, result["failure"]),
+        }
+    )
+
+
+@require_http_methods(["POST"])
+def repair_access_view(
+    request: HttpRequest, org_slug: str, product_code: str
+) -> JsonResponse:
+    """Retry Setup: provision again and seat the person where they may be
+    seated, then answer with the product's access, read afresh."""
+    from workeasy360.commercial.provisioning import activation
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    blocked = limited(request, "order_place", user=getattr(request, "user", None))
+    if blocked is not None:
+        return blocked
+    failure = activation.repair_access(ctx, product_code)
+    return JsonResponse({"access": _access_one(ctx, product_code, failure)})
+
+
 @require_http_methods(["POST"])
 def trial_cancel_view(
     request: HttpRequest, org_slug: str, trial_id: UUID

@@ -134,6 +134,10 @@ class Product(models.Model):
     #: account elsewhere, a domain, a WhatsApp number...), as the Super Admin
     #: wrote it. Shown on the Store's product page; empty shows nothing.
     setup_requirements = models.JSONField(default=list, blank=True, db_default=[])
+    #: ADR-078: the default product role for each organization role
+    #: (``domain.validate_role_policy``); empty = the platform default
+    #: (``domain.DEFAULT_PRODUCT_ROLES``). Sent to the product at sign-in.
+    role_policy = models.JSONField(default=dict, blank=True, db_default={})
     #: The product page's video: a YouTube or Vimeo link in its canonical watch
     #: form (``domain.validate_video_url``); empty = no video.
     video_url = models.CharField(max_length=200, blank=True, default="", db_default="")
@@ -267,6 +271,18 @@ class ProductTrialConfig(models.Model):
     #: Plan codes of *this* product a trial may be started on (validated in
     #: the service, re-checked against the live catalog when a trial starts).
     eligible_plan_codes = models.JSONField(default=list, blank=True)
+    #: ADR-078 - who may trial it and how often (``domain.TRIAL_*``). The
+    #: defaults are the Phase 11 rule: any organization, once per product.
+    repeat_policy = models.CharField(max_length=16, default="never", db_default="never")
+    #: Days after the previous trial ended before another may start
+    #: (``repeat_policy == "after_cooldown"`` only).
+    repeat_after_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    eligibility = models.CharField(
+        max_length=24, default="all_organizations", db_default="all_organizations"
+    )
+    #: A person who started a trial of this product in any of their
+    #: organizations may not start another in a different one.
+    one_trial_per_person = models.BooleanField(default=False, db_default=False)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -275,6 +291,23 @@ class ProductTrialConfig(models.Model):
             models.CheckConstraint(
                 condition=models.Q(duration_days__gte=1, duration_days__lte=365),
                 name="ck_trial_config_days",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(repeat_policy="never", repeat_after_days__isnull=True)
+                    | models.Q(
+                        repeat_policy="after_cooldown",
+                        repeat_after_days__gte=1,
+                        repeat_after_days__lte=730,
+                    )
+                ),
+                name="ck_trial_config_repeat",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    eligibility__in=["all_organizations", "new_customers"]
+                ),
+                name="ck_trial_config_eligibility",
             ),
             models.CheckConstraint(
                 condition=models.Q(seat_limit__isnull=True) | models.Q(seat_limit__gte=1),

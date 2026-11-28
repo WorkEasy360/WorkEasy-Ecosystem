@@ -660,6 +660,142 @@ def validate_trial_terms(
     }
 
 
+#: ADR-078: how often one organization may trial a product.
+TRIAL_REPEAT_NEVER = "never"
+TRIAL_REPEAT_AFTER_COOLDOWN = "after_cooldown"
+TRIAL_REPEAT_POLICIES = (TRIAL_REPEAT_NEVER, TRIAL_REPEAT_AFTER_COOLDOWN)
+MAX_TRIAL_COOLDOWN_DAYS = 730
+#: ADR-078: which organizations may trial it at all.
+TRIAL_ELIGIBILITY_ALL = "all_organizations"
+TRIAL_ELIGIBILITY_NEW = "new_customers"
+TRIAL_ELIGIBILITIES = (TRIAL_ELIGIBILITY_ALL, TRIAL_ELIGIBILITY_NEW)
+
+
+def validate_trial_policy(
+    *,
+    repeat_policy: Any,
+    repeat_after_days: Any,
+    eligibility: Any,
+    one_trial_per_person: Any,
+) -> dict[str, Any]:
+    """The shape of a product's trial eligibility and repeat rules (ADR-078).
+
+    - ``repeat_policy``: ``never`` (one trial per organization and product, the
+      default) or ``after_cooldown`` (another, ``repeat_after_days`` after the
+      previous one ended - never two at once).
+    - ``eligibility``: ``all_organizations`` or ``new_customers`` (an
+      organization that has never paid for the product).
+    - ``one_trial_per_person``: one trial per person across all their
+      organizations, so a new workspace is not a new trial.
+    """
+    if repeat_policy not in TRIAL_REPEAT_POLICIES:
+        raise CatalogValidationError(
+            "repeat_policy is never or after_cooldown.", field="repeat_policy"
+        )
+    if repeat_policy == TRIAL_REPEAT_NEVER:
+        days = None
+    elif (
+        isinstance(repeat_after_days, bool)
+        or not isinstance(repeat_after_days, int)
+        or not 1 <= repeat_after_days <= MAX_TRIAL_COOLDOWN_DAYS
+    ):
+        raise CatalogValidationError(
+            f"repeat_after_days is a whole number from 1 to {MAX_TRIAL_COOLDOWN_DAYS}.",
+            field="repeat_after_days",
+        )
+    else:
+        days = repeat_after_days
+    if eligibility not in TRIAL_ELIGIBILITIES:
+        raise CatalogValidationError(
+            "eligibility is all_organizations or new_customers.", field="eligibility"
+        )
+    if not isinstance(one_trial_per_person, bool):
+        raise CatalogValidationError(
+            "one_trial_per_person is true or false.", field="one_trial_per_person"
+        )
+    return {
+        "repeat_policy": repeat_policy,
+        "repeat_after_days": days,
+        "eligibility": eligibility,
+        "one_trial_per_person": one_trial_per_person,
+    }
+
+
+# --- ADR-078: the default product-role policy ------------------------------------
+
+#: The organization's own system roles, strongest first: a person holding more
+#: than one gets the product role of the strongest.
+ORGANIZATION_ROLE_ORDER = ("owner", "admin", "billing_manager", "member", "readonly")
+#: The platform default every product starts from - three product-level roles
+#: each product maps to its own (docs/auto-trial/product-roles.md).
+DEFAULT_PRODUCT_ROLES: dict[str, str] = {
+    "owner": "admin",
+    "admin": "admin",
+    "billing_manager": "member",
+    "member": "member",
+    "readonly": "viewer",
+}
+_PRODUCT_ROLE_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
+#: A product role is product-level only. Anything that reads like platform or
+#: staff authority is refused, so a policy can never name one.
+_FORBIDDEN_ROLE_WORDS = (
+    "super",
+    "platform",
+    "staff",
+    "root",
+    "system",
+    "w360",
+    "workeasy",
+)
+
+
+def validate_role_policy(raw: Any) -> dict[str, str]:
+    """A product's default-role policy: ``{organization role: product role}``
+    for some or all of ``ORGANIZATION_ROLE_ORDER`` (an empty object means "the
+    platform default"). Product role keys are lower-case identifiers and never
+    a platform, staff or super-admin authority."""
+    if not isinstance(raw, dict):
+        raise CatalogValidationError(
+            "The role policy maps organization roles to product roles.",
+            field="role_policy",
+        )
+    clean: dict[str, str] = {}
+    for org_role, product_role in raw.items():
+        if org_role not in ORGANIZATION_ROLE_ORDER:
+            raise CatalogValidationError(
+                f"Unknown organization role: {str(org_role)[:40]}.", field="role_policy"
+            )
+        if not isinstance(product_role, str) or not _PRODUCT_ROLE_RE.match(product_role):
+            raise CatalogValidationError(
+                "A product role is 2 to 32 lower-case letters, digits or underscores.",
+                field="role_policy",
+            )
+        if any(word in product_role for word in _FORBIDDEN_ROLE_WORDS):
+            raise CatalogValidationError(
+                "A product role cannot be a platform, staff or super-admin role.",
+                field="role_policy",
+            )
+        clean[org_role] = product_role
+    return clean
+
+
+def effective_role_policy(stored: Any) -> dict[str, str]:
+    """The platform default, overridden by what Super Admin set for the product."""
+    return {**DEFAULT_PRODUCT_ROLES, **(stored or {})}
+
+
+def resolve_product_role(stored: Any, organization_roles: Any) -> str:
+    """The one product role a member gets: from their strongest organization
+    role (the owner flag counts as ``owner``); a member with no system role
+    gets the policy's ``member`` role."""
+    policy = effective_role_policy(stored)
+    held = set(organization_roles or ())
+    for role in ORGANIZATION_ROLE_ORDER:
+        if role in held:
+            return policy[role]
+    return policy["member"]
+
+
 def validate_link_url(raw: Any, *, field: str) -> str:
     """Empty, or an address a store page may link a browser to (ADR-051).
 

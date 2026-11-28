@@ -680,6 +680,16 @@
   background: var(--w360-warning-bg);
 }
 
+/* 2026-11-28: the line under a product's access button (trial days left,
+   "setting up", why it cannot open yet). Full width of its button row. */
+.accessNote {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--store-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 .empty {
   padding: 32px 20px;
   text-align: center;

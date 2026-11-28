@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from django.db.models import Prefetch
@@ -134,6 +135,8 @@ class ProductTrialDTO:
     started_at: datetime
     ends_at: datetime
     ended_at: datetime | None
+    #: Who started it: the one person the automatic activation seats by itself.
+    started_by_user_id: UUID | None = None
 
     def is_effective_at(self, moment: datetime) -> bool:
         """Whether it grants a trial at ``moment``: still ``active`` and inside
@@ -164,6 +167,7 @@ def _trial_dto(row) -> ProductTrialDTO:
         started_at=row.started_at,
         ends_at=row.ends_at,
         ended_at=row.ended_at,
+        started_by_user_id=row.started_by_user_id,
     )
 
 
@@ -651,3 +655,68 @@ def has_used_a_trial(organization_id: UUID, *, product_code: str) -> bool:
         product_code=product_code,
         subscription__trial_ends_at__isnull=False,
     ).exists()
+
+
+def trial_history(organization_id: UUID, *, product_code: str) -> list[tuple[str, Any]]:
+    """``(status, ended)`` for every trial this organization had of this product
+    (ADR-078's repeat rule): product trials with the moment each stopped
+    granting (``ended_at``, else ``ends_at``), and older plan-level trials with
+    their subscription's trial end. Two queries."""
+    from workeasy360.commercial.subscriptions.models import (
+        ProductTrial,
+        SubscriptionItem,
+    )
+
+    rows: list[tuple[str, Any]] = [
+        (status, ended_at or ends_at)
+        for status, ended_at, ends_at in ProductTrial.objects.filter(
+            organization_id=organization_id, product_code=product_code
+        ).values_list("status", "ended_at", "ends_at")
+    ]
+    rows += [
+        ("ended", ends)
+        for ends in SubscriptionItem.objects.filter(
+            organization_id=organization_id,
+            product_code=product_code,
+            subscription__trial_ends_at__isnull=False,
+        ).values_list("subscription__trial_ends_at", flat=True)
+    ]
+    return rows
+
+
+def has_paid_for(organization_id: UUID, *, product_code: str) -> bool:
+    """Whether this organization ever held a paid line of this product (a
+    subscription that was activated) - ADR-078's "new customers only"."""
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    return SubscriptionItem.objects.filter(
+        organization_id=organization_id,
+        product_code=product_code,
+        subscription__activated_at__isnull=False,
+    ).exists()
+
+
+def person_trialled_elsewhere(
+    user_id: UUID, organization_ids: Any, *, product_code: str
+) -> bool:
+    """Whether ``user_id`` started a trial of this product in any of
+    ``organization_ids`` (their *other* organizations, from the access
+    directory). Each is read in its own database scope - row-level security
+    is never bypassed - with application scoping relaxed audibly."""
+    from workeasy360.commercial.subscriptions.models import ProductTrial
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with unscoped_access(
+        reason="One trial per person: the person's own other organizations",
+        module="commercial.subscriptions.selectors",
+    ):
+        for organization_id in organization_ids:
+            with organization_db_scope(organization_id):
+                if ProductTrial.unscoped.filter(
+                    organization_id=organization_id,
+                    product_code=product_code,
+                    started_by_user_id=user_id,
+                ).exists():
+                    return True
+    return False

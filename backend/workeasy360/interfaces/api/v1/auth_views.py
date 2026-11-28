@@ -1200,6 +1200,34 @@ def _create_organization(request: HttpRequest) -> JsonResponse:
     )
 
 
+@require_http_methods(["POST"])
+def workspace_view(request: HttpRequest) -> JsonResponse:
+    """The organization this person buys and trials for, created for them when
+    they have none (2026-11-28, automatic free trials). ``name`` is optional;
+    ``idempotency_key`` too. At most one organization is ever created this way
+    (``onboarding.ensure_workspace``). Same rate limits as creating one."""
+    from workeasy360.platform.onboarding.services import ensure_workspace
+
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return JsonResponse({"code": "login_required"}, status=401)
+    limited = _throttle_organization_creation(request, user.id)
+    if limited is not None:
+        return limited
+    body = _body(request)
+    name = body.get("name")
+    key = body.get("idempotency_key") or None
+    if key is not None and (not isinstance(key, str) or len(key) > 100):
+        raise OrganizationValidationError(
+            "idempotency_key must be a string of at most 100 characters.",
+            field="idempotency_key",
+        )
+    found = ensure_workspace(
+        user_id=user.id, name=name if isinstance(name, str) else None, idempotency_key=key
+    )
+    return JsonResponse(found, status=201 if found["created"] else 200)
+
+
 def _throttle_organization_creation(
     request: HttpRequest, user_id: Any
 ) -> JsonResponse | None:

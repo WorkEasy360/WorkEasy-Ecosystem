@@ -56,6 +56,7 @@ from workeasy360.commercial.catalog.domain import (
     validate_subcategory,
     validate_tagline,
     validate_tags,
+    validate_trial_policy,
     validate_trial_terms,
     validate_video_upload,
     validate_video_url,
@@ -962,8 +963,17 @@ def configure_product_trial(
     seat_limit: Any = None,
     payment_method_required: Any = False,
     eligible_plan_codes: Any = None,
+    repeat_policy: Any = None,
+    repeat_after_days: Any = None,
+    eligibility: Any = None,
+    one_trial_per_person: Any = None,
 ) -> Any:
     """Set how a product may be trialled (Phase 11). One row per product.
+
+    ADR-078: the eligibility and repeat rules (``validate_trial_policy``). A
+    caller that names none of them keeps what is stored - the Product
+    Publisher and ``register_products`` set only the terms - and a new row
+    starts from the default rule: any organization, once per product.
 
     Shape and bounds are ``validate_trial_terms``; here the eligible plans are
     checked against the catalog (each must be a standard plan of *this*
@@ -999,25 +1009,28 @@ def configure_product_trial(
                 field="eligible_plan_codes",
             )
         existing = ProductTrialConfig.objects.filter(product_id=product.id).first()
-        before = (
-            None
-            if existing is None
-            else {
-                "enabled": existing.enabled,
-                "duration_days": existing.duration_days,
-                "seat_limit": existing.seat_limit,
-                "eligible_plan_codes": list(existing.eligible_plan_codes),
+        before = None if existing is None else _trial_audit_row(existing)
+        named = {
+            "repeat_policy": repeat_policy,
+            "repeat_after_days": repeat_after_days,
+            "eligibility": eligibility,
+            "one_trial_per_person": one_trial_per_person,
+        }
+        if any(v is not None for v in named.values()):
+            stored = {
+                "repeat_policy": getattr(existing, "repeat_policy", "never"),
+                "repeat_after_days": getattr(existing, "repeat_after_days", None),
+                "eligibility": getattr(existing, "eligibility", "all_organizations"),
+                "one_trial_per_person": getattr(existing, "one_trial_per_person", False),
             }
-        )
+            wanted = {k: (stored[k] if v is None else v) for k, v in named.items()}
+            if repeat_policy == "never":
+                wanted["repeat_after_days"] = None
+            terms.update(validate_trial_policy(**wanted))
         config, _ = ProductTrialConfig.objects.update_or_create(
             product_id=product.id, defaults=terms
         )
-        after = {
-            "enabled": config.enabled,
-            "duration_days": config.duration_days,
-            "seat_limit": config.seat_limit,
-            "eligible_plan_codes": list(config.eligible_plan_codes),
-        }
+        after = _trial_audit_row(config)
         if before != after:
             refresh_public_catalog()
             audit.record(
@@ -1028,6 +1041,45 @@ def configure_product_trial(
                 changes={"code": product.code, "before": before, "after": after},
             )
     return config
+
+
+def set_product_role_policy(ctx: TenantContext, *, product_id: UUID, policy: Any) -> Any:
+    """Set a product's default-role policy (ADR-078): which product role each
+    organization role gets when a member signs in to the product. Staff only;
+    audited with before and after. ``{}`` returns the product to the platform
+    default."""
+    from workeasy360.commercial.catalog.domain import validate_role_policy
+    from workeasy360.commercial.catalog.models import Product
+
+    _authorise(ctx, "catalog.product.update")
+    clean = validate_role_policy(policy)
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        before = dict(product.role_policy or {})
+        if before != clean:
+            product.role_policy = clean
+            product.save(update_fields=["role_policy", "updated_at"])
+            audit.record(
+                ctx,
+                "commercial.product.role_policy_set",
+                resource_type="catalog.product",
+                resource_id=product.id,
+                changes={"code": product.code, "before": before, "after": clean},
+            )
+    return product
+
+
+def _trial_audit_row(config: Any) -> dict[str, Any]:
+    return {
+        "enabled": config.enabled,
+        "duration_days": config.duration_days,
+        "seat_limit": config.seat_limit,
+        "eligible_plan_codes": list(config.eligible_plan_codes),
+        "repeat_policy": config.repeat_policy,
+        "repeat_after_days": config.repeat_after_days,
+        "eligibility": config.eligibility,
+        "one_trial_per_person": config.one_trial_per_person,
+    }
 
 
 # --- features -------------------------------------------------------------

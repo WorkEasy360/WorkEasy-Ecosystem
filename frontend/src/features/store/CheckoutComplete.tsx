@@ -14,6 +14,8 @@ import { useMyAccount, useStoreAccount } from "./account";
 import { CheckoutBand, TrustStrip } from "./Checkout";
 import { StoreSignInForm } from "./StoreAuth";
 import { takeReturnTo } from "./returnTo";
+import { AccessActions } from "./productAccess";
+import { useShellCatalog } from "./StoreShell";
 import { myAccountLinks, storePaths } from "./links";
 import styles from "./Checkout.module.css";
 import shell from "./Store.module.css";
@@ -164,6 +166,9 @@ export function CheckoutCompleteScreen() {
 function Confirmation({ found, slug, back, open }: { found: Found; slug: string; back: { url: string; label: string } | null; open: (path: string) => void }) {
   const { outcome, attempt, invoice, order, trial, setup } = found;
   const state = subscriptionState(order, trial);
+  const catalog = useShellCatalog();
+  const trialCard = trial ? catalog?.products.find((p) => p.code === trial.product_code) : undefined;
+  const trialName = trialCard?.title ?? trial?.product_code ?? "";
   const links = myAccountLinks(slug);
   const wallet = order?.kind === "wallet" ? (order.lines?.[0] as { wallet_kind?: string } | undefined)?.wallet_kind : undefined;
   const currency = order?.currency ?? attempt?.currency ?? "INR";
@@ -188,7 +193,7 @@ function Confirmation({ found, slug, back, open }: { found: Found; slug: string;
       <p className={styles.muted} role="status">
         {outcome === "success"
           ? trial
-            ? "Nothing was charged. Open the product from My Products."
+            ? "Nothing was charged. Your access is set up automatically - open the product straight from here."
             : order?.kind === "wallet"
               ? `The payment is confirmed${wallet ? ` and your ${WALLET_NAME[wallet] ?? "wallet"} is credited once the order completes` : ""}.`
               : "The payment is confirmed by the provider. Your subscription activates automatically."
@@ -223,7 +228,7 @@ function Confirmation({ found, slug, back, open }: { found: Found; slug: string;
         {(order || trial) && (
           <div>
             <dt>{order?.kind === "wallet" ? "Recharge" : "Purchased product"}</dt>
-            <dd>{order?.description ?? trial?.product_code}</dd>
+            <dd>{order?.description ?? trialName}</dd>
           </div>
         )}
         {attempt && (attempt.wallet_amount_minor ?? 0) > 0 && (
@@ -257,7 +262,10 @@ function Confirmation({ found, slug, back, open }: { found: Found; slug: string;
         )}
       </dl>
       <div className={styles.confirmActions}>
-        {order?.kind === "wallet" ? (
+        {trial && outcome === "success" ? (
+          // 2026-11-28: the product itself, once the server says it opens.
+          <AccessActions code={trial.product_code} title={trialName} productSlug={trialCard?.slug ?? trial.product_code} showBuy={false} />
+        ) : order?.kind === "wallet" ? (
           <button type="button" className={shell.primary} onClick={() => open(links[2].path)}>
             <Icon name="wallet" size={18} /> View Transaction
           </button>

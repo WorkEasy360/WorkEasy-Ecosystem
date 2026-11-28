@@ -325,9 +325,11 @@ class ProductTrial(TenantScopedModel):
     (source kind ``trial``): no subscription is created or changed, nothing is
     invoiced, and the entitlement disappears by itself at ``ends_at``.
 
-    **Once, by the database.** ``uq_product_trial_once`` makes a second trial
-    of the same product by the same organization unrepresentable, whatever a
-    retry, a double click or a replay does.
+    **One at a time, by the database.** ``uq_product_trial_active`` makes two
+    running trials of the same product in one organization unrepresentable,
+    whatever a retry, a double click or a race does. *Whether* another trial
+    may follow an ended one is the product's trial policy (ADR-078: by default
+    never - one per organization and product), decided in ``trials``.
 
     The terms (``seats``, ``duration_days``, ``ends_at``) are copied from the
     product's configuration when the trial starts: changing the configuration
@@ -362,7 +364,9 @@ class ProductTrial(TenantScopedModel):
         db_table = "subscriptions_product_trial"
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "product_code"], name="uq_product_trial_once"
+                fields=["organization", "product_code"],
+                condition=models.Q(status="active"),
+                name="uq_product_trial_active",
             ),
             models.CheckConstraint(
                 condition=models.Q(ends_at__gt=models.F("started_at")),

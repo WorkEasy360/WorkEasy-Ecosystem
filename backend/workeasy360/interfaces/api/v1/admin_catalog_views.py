@@ -117,6 +117,11 @@ def product_trial_view(
             seat_limit=body.get("seat_limit"),
             payment_method_required=body.get("payment_method_required", False),
             eligible_plan_codes=body.get("eligible_plan_codes", []),
+            # ADR-078: absent keeps what is stored.
+            repeat_policy=body.get("repeat_policy"),
+            repeat_after_days=body.get("repeat_after_days"),
+            eligibility=body.get("eligibility"),
+            one_trial_per_person=body.get("one_trial_per_person"),
         )
     return JsonResponse(
         {
@@ -125,8 +130,44 @@ def product_trial_view(
             "seat_limit": config.seat_limit,
             "payment_method_required": config.payment_method_required,
             "eligible_plan_codes": list(config.eligible_plan_codes),
+            "repeat_policy": config.repeat_policy,
+            "repeat_after_days": config.repeat_after_days,
+            "eligibility": config.eligibility,
+            "one_trial_per_person": config.one_trial_per_person,
         }
     )
+
+
+@staff_view(["GET", "PUT"])
+def product_role_policy_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID
+) -> JsonResponse:
+    """ADR-078: the product's default product role for each organization role.
+    PUT ``{"policy": {...}}``; ``{}`` restores the platform default."""
+    from workeasy360.commercial.catalog.selectors import (
+        role_policy_of_product,
+        role_policy_row,
+    )
+    from workeasy360.contracts.errors import (
+        CatalogValidationError,
+        CommercialRecordNotFound,
+    )
+    from workeasy360.platform.authz import services as authz
+
+    with acting_scope(ctx):
+        if request.method == "PUT":
+            body = _body(request)
+            if "policy" not in body:
+                raise CatalogValidationError("Send the policy.", field="policy")
+            product = catalog_services.set_product_role_policy(
+                ctx, product_id=product_id, policy=body["policy"]
+            )
+            return JsonResponse(role_policy_row(product))
+        authz.require(ctx, "platform.staff_catalog.view")
+        row = role_policy_of_product(product_id)
+    if row is None:
+        raise CommercialRecordNotFound("No such product.")
+    return JsonResponse(row)
 
 
 @staff_view(["PATCH"])

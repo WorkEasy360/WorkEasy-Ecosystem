@@ -58,7 +58,8 @@ STAFF_UNDER_ORGS: Final = re.compile(
 #: ADR-065: the organization endpoints the Digital Store's own host serves - its
 #: checkout (access, quote, order, billing details, paying an invoice and
 #: following the payment), Recharge (wallet balances, top-ups, credit packs),
-#: trials and the bell. Everything else of an organization (members, security,
+#: trials, product access (open, start a trial, retry setup) and the bell.
+#: Everything else of an organization (members, security,
 #: integrations, settings...) stays the customer portal's alone, so an XSS on the
 #: Store could not reach it.
 STORE_UNDER_ORGS: Final = re.compile(
@@ -70,6 +71,10 @@ STORE_UNDER_ORGS: Final = re.compile(
     r"|billing/payments/[0-9a-f-]{36}"
     r"|wallets(/top-up|/credit-packs)?"
     r"|trials(/[0-9a-f-]{36}/cancel)?"
+    # 2026-11-28: each product's action, Start Free Trial, Retry Setup, and
+    # Open Product (the launch decision, re-checked by the launch endpoint).
+    r"|product-access(/[a-z0-9_]{1,64}/(trial|repair))?"
+    r"|apps/[a-z0-9_]{1,64}/launch"
     r"|notifications"
     r")/?$"
 )
