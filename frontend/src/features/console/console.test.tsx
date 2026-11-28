@@ -1358,6 +1358,35 @@ describe("explore: products (Phase 11)", () => {
     await expectNoViolations(container);
   });
 
+  it("a bought product that is not connected yet says so instead of an Open that would fail", async () => {
+    // Production 2026-11-27: Easy CRM bought while its integration was still a
+    // draft - Open answered "That product isn't available yet."
+    mockApi({
+      [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers({ plans: [], bundles: [] }) }],
+      [`GET ${ORG}/explore`]: [
+        {
+          status: 200,
+          body: explore({
+            products: [
+              exploreProduct("easy_crm", "Easy CRM", { trial_state: "owned", holding: "subscription", launch_ready: false }),
+              exploreProduct("easybook", "EasyBook", { trial_state: "owned", holding: "subscription", launch_ready: true }),
+            ],
+          }),
+        },
+      ],
+    });
+    const { container } = renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
+    await screen.findByRole("heading", { name: "Products" });
+    const crm = card("Easy CRM");
+    expect(within(crm).queryByRole("button", { name: /^Open/ })).not.toBeInTheDocument();
+    expect(within(crm).getByRole("status")).toHaveTextContent(
+      "Your access to Easy CRM is active. Easy CRM is still being connected to WorkEasy360 sign-in",
+    );
+    // A connected product still opens (as does an older answer without the field).
+    expect(within(card("EasyBook")).getByRole("button", { name: "Open EasyBook" })).toBeEnabled();
+    await expectNoViolations(container);
+  });
+
   it("an expired trial says so and offers Upgrade / Buy now, never another trial", async () => {
     mockApi({
       [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers({ plans: [], bundles: [] }) }],

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { consoleApi, type ExploreProduct, type ListPrice, type MarketplaceOffers } from "@/lib/api/console";
 import { ApiError } from "@/lib/api/client";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
-import { LaunchButton } from "@/features/launcher/LaunchButton";
+import { HeldProductOpen } from "@/features/launcher/HeldProductOpen";
 import { SignInButton } from "@/features/launcher/SignInButton";
 import { LoadGate, money, useAction, useLoad } from "@/features/controlplane/ui";
 import cp from "@/features/controlplane/ControlPlane.module.css";
@@ -246,7 +246,7 @@ export function ExploreActions({ slug, product, canBuy, busy, hasAccount, onStar
   const offersPurchase = canBuy && product.availability === "available" && Boolean(trialPlan || buyPlan);
   return (
     <>
-      {held && <LaunchButton orgSlug={slug} productCode={product.code} productName={product.name} />}
+      {held && <HeldProductOpen orgSlug={slug} productCode={product.code} productName={product.name} launchReady={product.launch_ready} />}
       {signIn && <SignInButton orgSlug={slug} productCode={product.code} productName={product.name} primary={!offersPurchase} />}
       {canBuy && product.availability === "available" && !held && trialPlan && (
         <button

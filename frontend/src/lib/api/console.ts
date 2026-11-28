@@ -419,6 +419,11 @@ export interface ExploreProduct {
   trial_ends_at: string | null;
   trial_days_left: number | null;
   trial_outcome: "expired" | "cancelled" | "converted" | "ended" | null;
+  /** Whether the product can be opened at all: its integration is connected
+   * (the launcher's own structural test). `false` for a product registered but
+   * not yet connected - Open would be refused, so a held one says it is being
+   * connected instead. Absent from an older answer: treated as ready. */
+  launch_ready?: boolean;
   /** ADR-074: whether WorkEasy360 sign-in can reach this product right now -
    * a registry fact, never the organization's access. `available` offers
    * "Sign in" whether or not the organization holds the product. */

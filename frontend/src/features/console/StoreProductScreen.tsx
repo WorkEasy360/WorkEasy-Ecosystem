@@ -7,7 +7,7 @@ import { consoleApi, type StoreProductPage } from "@/lib/api/console";
 import { ApiError } from "@/lib/api/client";
 import { LoadGate, money, useAction, useLoad } from "@/features/controlplane/ui";
 import { ProductMark } from "@/features/controlplane/productmanager/ProductMark";
-import { LaunchButton } from "@/features/launcher/LaunchButton";
+import { HeldProductOpen } from "@/features/launcher/HeldProductOpen";
 import { PlanComparison, type ComparablePlan } from "@/features/storefront/PlanComparison";
 import { BADGE_LABEL, PER } from "@/features/storefront/StoreBrowser";
 import styles from "@/features/storefront/StoreBrowser.module.css";
@@ -134,7 +134,7 @@ export function StoreProductScreen({ productCode }: { productCode: string }) {
                   {p.status === "trial" && <p role="status">Your free trial is running{p.trial_days_left != null ? `: ${p.trial_days_left} day${p.trial_days_left === 1 ? "" : "s"} left` : ""}.</p>}
                   {p.status === "coming_soon" && <p role="status">Coming soon.</p>}
                   <div className={styles.actions}>
-                    {held && <LaunchButton orgSlug={slug} productCode={p.code} productName={p.name} />}
+                    {held && <HeldProductOpen orgSlug={slug} productCode={p.code} productName={p.name} launchReady={p.launch_ready} />}
                     {p.price && (
                       <span>
                         From <strong>{money(p.price.amount_minor, p.price.currency)}</strong>

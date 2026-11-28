@@ -371,6 +371,37 @@ def launch_urls(product_codes: Iterable[str]) -> dict[str, str]:
     }
 
 
+def launchable_codes(product_codes: Iterable[str]) -> frozenset[str]:
+    """Which of these products the launcher could send a browser to at all:
+    those whose integration is ``active`` or ``suspended``, in one query.
+
+    The bulk form of the launcher's *structural* test
+    (``launcher.access.can_launch_product``): no integration, a ``draft`` one
+    (registered, not connected yet) or a ``retired`` one answers
+    ``product_unavailable`` whatever the organization holds, so a Store card
+    must not offer Open for it. A suspended one stays in - the launcher answers
+    it with its own "try again shortly", an operational state, not a missing
+    one. As ungated as ``launch_target``: a yes or no per product, never a URL
+    or a credential."""
+    from workeasy360.platform.ecosystem.models import (
+        IntegrationStatus,
+        ProductIntegration,
+    )
+
+    codes = sorted({str(c) for c in product_codes})
+    if not codes:
+        return frozenset()
+    return frozenset(
+        ProductIntegration.objects.filter(
+            product_code__in=codes,
+            status__in=(
+                IntegrationStatus.ACTIVE.value,
+                IntegrationStatus.SUSPENDED.value,
+            ),
+        ).values_list("product_code", flat=True)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class IntegrationPresenceDTO:
     """What a member may be shown about a product's connection - nothing that
