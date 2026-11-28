@@ -22,6 +22,23 @@ import styles from "./AccountOverview.module.css";
  * page.
  */
 
+/**
+ * An email address that, when it has to wrap, breaks after the "@" rather than
+ * mid-word ("workeasy360hq@gmail.co / m" on the live Home, 2026-11-27). The text
+ * and what screen readers hear are unchanged; only a line-break hint is added.
+ */
+export function EmailText({ email }: { email: string }) {
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return <>{email}</>;
+  return (
+    <>
+      {email.slice(0, at + 1)}
+      <wbr />
+      {email.slice(at + 1)}
+    </>
+  );
+}
+
 /** Morning, afternoon or evening where the person is: their time zone when they set one. */
 export function greetingFor(now: Date, timeZone?: string): string {
   let hour = now.getHours();
@@ -83,7 +100,9 @@ export function ProfileSummary({ profile, onEdit, showId = false }: { profile: A
         ) : (
           <Badge tone="warning">Email not verified</Badge>
         )}
-        <p className={styles.email}>{profile.email}</p>
+        <p className={styles.email}>
+          <EmailText email={profile.email} />
+        </p>
         {profile.pending_email && (
           <p className={styles.inline}>
             <Badge tone="info">Pending verification</Badge>
@@ -193,7 +212,9 @@ function SecuritySummary({ profile, events }: { profile: AccountProfile; events:
         <li>
           <Icon name="mail" size={20} />
           <span className={styles.rowLabel}>Email</span>
-          <span className={styles.rowValue}>{profile.email}</span>
+          <span className={styles.rowValue}>
+            <EmailText email={profile.email} />
+          </span>
           {profile.email_verified ? (
             <Badge tone="success" icon="checkCircle">
               Verified
