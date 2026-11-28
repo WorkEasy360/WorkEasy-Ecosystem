@@ -617,6 +617,38 @@ describe("Devices & Sessions", () => {
     );
     await expectNoViolations(container);
   });
+
+  it("after Sign out everywhere, the sessions loaded before are no longer listed", async () => {
+    const session = (id: string, current: boolean, device: string) => ({
+      session_id: id,
+      current,
+      signed_in_at: "2026-11-19T08:00:00Z",
+      last_active_at: "2026-11-19T09:00:00Z",
+      expires_at: "2026-12-19T08:00:00Z",
+      ip_prefix: "203.0.113.0/24",
+      device_label: device,
+      portal_sessions: 1,
+    });
+    mockApi({
+      "GET /api/v1/auth/account/sessions": [ok({ sessions: [session("here", true, "Chrome on Windows"), session("there", false, "Safari on iPhone")] })],
+      "POST /api/v1/auth/sessions/sign-out-everywhere": [ok({ ok: true, workeasy360: { sessions_ended: 2 }, products: [], complete: true })],
+    });
+    const { container } = render(<ActiveSessions />);
+    expect(await screen.findByText("This device")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Sign out Safari on iPhone/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out everywhere" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out everywhere" }));
+    expect(await screen.findByText(/You are signed out of WorkEasy360 everywhere \(2 ended\)/)).toBeInTheDocument();
+    // The stale rows, their Sign out buttons and "Sign out all other devices" are gone.
+    const where = screen.getByRole("region", { name: "Where you're signed in" });
+    expect(within(where).getByText(/No sign-ins to show: every session of this account has ended/)).toBeInTheDocument();
+    expect(within(where).queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("This device")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Sign out Safari on iPhone/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign out all other devices" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/login");
+    await expectNoViolations(container);
+  });
 });
 
 const NOTIFICATIONS = [
