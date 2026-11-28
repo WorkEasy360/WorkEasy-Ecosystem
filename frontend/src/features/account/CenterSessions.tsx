@@ -29,71 +29,77 @@ export function ActiveSessions() {
           Network is a coarse prefix, never your full address. A device signed in to User Admin and the Store from one sign-in is one row.
         </p>
         {feedback}
-        <LoadGate load={load} what="your sessions">
-          {(d) => {
-            const others = d.sessions.filter((s) => !s.current);
-            return (
-              <>
-                <Table
-                  caption="Your sign-ins, most recently active first"
-                  head={["Device", "Network", "Signed in", "Last activity", "Actions"]}
-                  isEmpty={d.sessions.length === 0}
-                  empty="No sessions to show."
-                >
-                  {d.sessions.map((s) => (
-                    <tr key={s.session_id}>
-                      <th scope="row">
-                        {s.device_label}
-                        {s.current && (
-                          <span className={styles.marker}>
-                            <Badge tone="success">This device</Badge>
-                          </span>
-                        )}
-                      </th>
-                      <td className={styles.mono}>{s.ip_prefix || "—"}</td>
-                      <td>{when(s.signed_in_at)}</td>
-                      <td>{when(s.last_active_at)}</td>
-                      <td>
-                        {s.current ? (
-                          <span className={styles.muted}>Current sign-in</span>
-                        ) : (
-                          <Button
-                            size="sm"
-                            aria-label={`Sign out ${s.device_label}, signed in ${when(s.signed_in_at)}`}
-                            aria-describedby={noteId}
-                            disabled={busy}
-                            onClick={() => revoke(s)}
-                          >
-                            Sign out
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
-                {others.length > 0 && (
-                  <div>
-                    <Button
-                      icon="logout"
-                      disabled={busy}
-                      onClick={() =>
-                        confirm.ask({
-                          title: "Sign out every other device?",
-                          message: "Every other device and browser is signed out at once. You stay signed in here.",
-                          confirmLabel: "Sign out other devices",
-                          danger: true,
-                          onConfirm: () => void act(() => accountApi.revokeOtherSessions(), "Every other device has been signed out."),
-                        })
-                      }
-                    >
-                      Sign out all other devices
-                    </Button>
-                  </div>
-                )}
-              </>
-            );
-          }}
-        </LoadGate>
+        {everywhere ? (
+          // Every session has just ended, this one included: the list loaded before is
+          // stale and cannot be fetched again, so it is not shown.
+          <p role="status">No sign-ins to show: every session of this account has ended, this device included.</p>
+        ) : (
+          <LoadGate load={load} what="your sessions">
+            {(d) => {
+              const others = d.sessions.filter((s) => !s.current);
+              return (
+                <>
+                  <Table
+                    caption="Your sign-ins, most recently active first"
+                    head={["Device", "Network", "Signed in", "Last activity", "Actions"]}
+                    isEmpty={d.sessions.length === 0}
+                    empty="No sessions to show."
+                  >
+                    {d.sessions.map((s) => (
+                      <tr key={s.session_id}>
+                        <th scope="row">
+                          {s.device_label}
+                          {s.current && (
+                            <span className={styles.marker}>
+                              <Badge tone="success">This device</Badge>
+                            </span>
+                          )}
+                        </th>
+                        <td className={styles.mono}>{s.ip_prefix || "—"}</td>
+                        <td>{when(s.signed_in_at)}</td>
+                        <td>{when(s.last_active_at)}</td>
+                        <td>
+                          {s.current ? (
+                            <span className={styles.muted}>Current sign-in</span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              aria-label={`Sign out ${s.device_label}, signed in ${when(s.signed_in_at)}`}
+                              aria-describedby={noteId}
+                              disabled={busy}
+                              onClick={() => revoke(s)}
+                            >
+                              Sign out
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  {others.length > 0 && (
+                    <div>
+                      <Button
+                        icon="logout"
+                        disabled={busy}
+                        onClick={() =>
+                          confirm.ask({
+                            title: "Sign out every other device?",
+                            message: "Every other device and browser is signed out at once. You stay signed in here.",
+                            confirmLabel: "Sign out other devices",
+                            danger: true,
+                            onConfirm: () => void act(() => accountApi.revokeOtherSessions(), "Every other device has been signed out."),
+                          })
+                        }
+                      >
+                        Sign out all other devices
+                      </Button>
+                    </div>
+                  )}
+                </>
+              );
+            }}
+          </LoadGate>
+        )}
       </Panel>
 
       <Panel title="Sign out everywhere">
