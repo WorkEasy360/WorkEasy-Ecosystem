@@ -342,6 +342,9 @@ describe("My Profile", () => {
     expect(within(security).getByText("Review your security")).toBeInTheDocument();
     expect(within(security).getByText("Off")).toBeInTheDocument();
     expect(within(security).getByText("Not added")).toBeInTheDocument();
+    // A long email wraps after the "@", never mid-word; the text itself is unchanged.
+    expect(within(security).getByText("ravi@example.com").innerHTML).toBe("ravi@<wbr>example.com");
+    expect(within(header).getByText("ravi@example.com").innerHTML).toBe("ravi@<wbr>example.com");
     expect(within(security).queryByText(/^Verified$/, { selector: "span" })).toBeInTheDocument();
     expect(await within(security).findByText(/^Last changed: /)).toBeInTheDocument();
     const activity = screen.getByRole("region", { name: "Recent Security Activity" });
